@@ -14,10 +14,10 @@ namespace ServiceStack.OrmLite.Tests
     public class ComplexType
     {
         public int Id { get; set; }
-        public SubType SubType { get; set; }
+        public ComplexSubType SubType { get; set; }
     }
 
-    public class SubType
+    public class ComplexSubType
     {
         public string Name { get; set; }
     }
@@ -32,7 +32,7 @@ namespace ServiceStack.OrmLite.Tests
 
             db.Insert(new ModelWithComplexType {
                 Id = 1,
-                ComplexType = new ComplexType { Id = 2, SubType = new SubType { Name = "Sub" } }
+                ComplexType = new ComplexType { Id = 2, SubType = new ComplexSubType { Name = "Sub" } }
             });
         }
 
@@ -130,7 +130,8 @@ namespace ServiceStack.OrmLite.Tests
                 InsertModelWithComplexType(db);
 
                 var str = db.SqlScalar<string>(TestSql);
-                Assert.That(str, Is.EqualTo("<ComplexType xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns=\"http://schemas.datacontract.org/2004/07/ServiceStack.OrmLite.Tests\"><Id>2</Id><SubType><Name>Sub</Name></SubType></ComplexType>"));
+                Assert.That(str, Is.EqualTo("<ComplexType xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns=\"http://schemas.datacontract.org/2004/07/ServiceStack.OrmLite.Tests\"><Id>2</Id><SubType><Name>Sub</Name></SubType></ComplexType>")   //.NET
+                                .Or.EqualTo("<ComplexType xmlns=\"http://schemas.datacontract.org/2004/07/ServiceStack.OrmLite.Tests\" xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\"><Id>2</Id><SubType><Name>Sub</Name></SubType></ComplexType>")); //.NET Core
 
                 var data = db.SingleById<ModelWithComplexType>(1);
                 Assert.That(data.ComplexType.SubType.Name, Is.EqualTo("Sub"));
@@ -150,7 +151,10 @@ namespace ServiceStack.OrmLite.Tests
                 InsertModelWithComplexType(db);
 
                 var str = db.SqlScalar<string>(TestSql);
-                Assert.That(str, Is.EqualTo("<?xml version=\"1.0\" encoding=\"utf-8\"?><ComplexType xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"><Id>2</Id><SubType><Name>Sub</Name></SubType></ComplexType>"));
+                Assert.That(str, Contains.Substring("<?xml version=\"1.0\" encoding=\"utf-8\"?><ComplexType "));
+                Assert.That(str, Contains.Substring("xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""));
+                Assert.That(str, Contains.Substring("xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\""));
+                Assert.That(str, Contains.Substring("<Id>2</Id><SubType><Name>Sub</Name></SubType></ComplexType>"));
 
                 var data = db.SingleById<ModelWithComplexType>(1);
                 Assert.That(data.ComplexType.SubType.Name, Is.EqualTo("Sub"));

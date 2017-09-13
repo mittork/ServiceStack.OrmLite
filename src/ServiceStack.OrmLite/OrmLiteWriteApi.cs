@@ -3,7 +3,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text;
 using ServiceStack.Data;
+using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite
 {
@@ -18,6 +20,23 @@ namespace ServiceStack.OrmLite
             return ormLiteConn != null ? ormLiteConn.LastCommandText : null;
         }
 
+        public static string GetLastSqlAndParams(this IDbCommand dbCmd)
+        {
+            var sb = StringBuilderCache.Allocate();
+            sb.AppendLine(dbCmd.CommandText)
+              .AppendLine("PARAMS: ");
+
+            foreach (IDataParameter parameter in dbCmd.Parameters)
+            {
+                sb.Append(parameter.ParameterName).Append(": ")
+                    .Append(parameter.Value.ToJsv())
+                    .Append(" : ").AppendLine((parameter.Value ?? DBNull.Value).GetType().Name);
+            }
+            sb.AppendLine();
+
+            return StringBuilderCache.ReturnAndFree(sb);
+        }
+
         /// <summary>
         /// Execute any arbitrary raw SQL.
         /// </summary>
@@ -28,12 +47,49 @@ namespace ServiceStack.OrmLite
         }
 
         /// <summary>
+        /// Execute any arbitrary raw SQL with db params.
+        /// </summary>
+        /// <returns>number of rows affected</returns>
+        public static int ExecuteSql(this IDbConnection dbConn, string sql, object dbParams)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.ExecuteSql(sql, dbParams));
+        }
+
+        /// <summary>
+        /// Execute any arbitrary raw SQL with db params.
+        /// </summary>
+        /// <returns>number of rows affected</returns>
+        public static int ExecuteSql(this IDbConnection dbConn, string sql, Dictionary<string,object> dbParams)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.ExecuteSql(sql, dbParams));
+        }
+
+        /// <summary>
         /// Insert 1 POCO, use selectIdentity to retrieve the last insert AutoIncrement id (if any). E.g:
         /// <para>var id = db.Insert(new Person { Id = 1, FirstName = "Jimi }, selectIdentity:true)</para>
         /// </summary>
         public static long Insert<T>(this IDbConnection dbConn, T obj, bool selectIdentity = false)
         {
             return dbConn.Exec(dbCmd => dbCmd.Insert(obj, selectIdentity));
+        }
+
+        /// <summary>
+        /// Insert 1 or more POCOs in a transaction using Table default values when defined. E.g:
+        /// <para>db.InsertUsingDefaults(new Person { FirstName = "Tupac", LastName = "Shakur" },</para>
+        /// <para>                       new Person { FirstName = "Biggie", LastName = "Smalls" })</para>
+        /// </summary>
+        public static void InsertUsingDefaults<T>(this IDbConnection dbConn, params T[] objs)
+        {
+            dbConn.Exec(dbCmd => dbCmd.InsertUsingDefaults(objs));
+        }
+
+        /// <summary>
+        /// Insert a collection of POCOs in a transaction. E.g:
+        /// <para>db.InsertAll(new[] { new Person { Id = 9, FirstName = "Biggie", LastName = "Smalls", Age = 24 } })</para>
+        /// </summary>
+        public static void InsertAll<T>(this IDbConnection dbConn, IEnumerable<T> objs)
+        {
+            dbConn.Exec(dbCmd => dbCmd.InsertAll(objs));
         }
 
         /// <summary>
@@ -47,21 +103,12 @@ namespace ServiceStack.OrmLite
         }
 
         /// <summary>
-        /// Insert a collection of POCOs in a transaction. E.g:
-        /// <para>db.InsertAll(new[] { new Person { Id = 9, FirstName = "Biggie", LastName = "Smalls", Age = 24 } })</para>
-        /// </summary>
-        public static void InsertAll<T>(this IDbConnection dbConn, IEnumerable<T> objs)
-        {
-            dbConn.Exec(dbCmd => dbCmd.InsertAll(objs));
-        }
-
-        /// <summary>
         /// Updates 1 POCO. All fields are updated except for the PrimaryKey which is used as the identity selector. E.g:
         /// <para>db.Update(new Person { Id = 1, FirstName = "Jimi", LastName = "Hendrix", Age = 27 })</para>
         /// </summary>
-        public static int Update<T>(this IDbConnection dbConn, T obj)
+        public static int Update<T>(this IDbConnection dbConn, T obj, Action<IDbCommand> commandFilter = null)
         {
-            return dbConn.Exec(dbCmd => dbCmd.Update(obj));
+            return dbConn.Exec(dbCmd => dbCmd.Update(obj, commandFilter));
         }
 
         /// <summary>
@@ -73,14 +120,18 @@ namespace ServiceStack.OrmLite
         {
             return dbConn.Exec(dbCmd => dbCmd.Update(objs));
         }
+        public static int Update<T>(this IDbConnection dbConn, Action<IDbCommand> commandFilter, params T[] objs)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.Update(objs, commandFilter));
+        }
 
         /// <summary>
         /// Updates 1 or more POCOs in a transaction. E.g:
         /// <para>db.UpdateAll(new[] { new Person { Id = 1, FirstName = "Jimi", LastName = "Hendrix", Age = 27 } })</para>
         /// </summary>
-        public static int UpdateAll<T>(this IDbConnection dbConn, IEnumerable<T> objs)
+        public static int UpdateAll<T>(this IDbConnection dbConn, IEnumerable<T> objs, Action<IDbCommand> commandFilter = null)
         {
-            return dbConn.Exec(dbCmd => dbCmd.UpdateAll(objs));
+            return dbConn.Exec(dbCmd => dbCmd.UpdateAll(objs, commandFilter));
         }
 
         /// <summary>
@@ -175,6 +226,16 @@ namespace ServiceStack.OrmLite
         }
 
         /// <summary>
+        /// Delete all rows provided. E.g:
+        /// <para>db.DeleteAll&lt;Person&gt;(people)</para>
+        /// </summary>
+        /// <returns>number of rows deleted</returns>
+        public static int DeleteAll<T>(this IDbConnection dbConn, IEnumerable<T> rows)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.DeleteAll(rows));
+        }
+
+        /// <summary>
         /// Delete all rows in the runtime table type. E.g:
         /// <para>db.DeleteAll(typeof(Person))</para>
         /// </summary>
@@ -186,21 +247,22 @@ namespace ServiceStack.OrmLite
 
         /// <summary>
         /// Delete rows using a SqlFormat filter. E.g:
+        /// <para>db.Delete&lt;Person&gt;("Age > @age", new { age = 42 })</para>
         /// </summary>
         /// <returns>number of rows deleted</returns>
-        public static int DeleteFmt<T>(this IDbConnection dbConn, string sqlFilter, params object[] filterParams)
+        public static int Delete<T>(this IDbConnection dbConn, string sqlFilter, object anonType)
         {
-            return dbConn.Exec(dbCmd => dbCmd.DeleteFmt<T>(sqlFilter, filterParams));
+            return dbConn.Exec(dbCmd => dbCmd.Delete<T>(sqlFilter, anonType));
         }
 
         /// <summary>
-        /// Delete rows from the runtime table type using a SqlFormat filter. E.g:
+        /// Delete rows using a SqlFormat filter. E.g:
+        /// <para>db.Delete&lt;Person&gt;("Age > @age", new { age = 42 })</para>
         /// </summary>
-        /// <para>db.DeleteFmt(typeof(Person), "Age = {0}", 27)</para>
         /// <returns>number of rows deleted</returns>
-        public static int DeleteFmt(this IDbConnection dbConn, Type tableType, string sqlFilter, params object[] filterParams)
+        public static int Delete(this IDbConnection dbConn, Type tableType, string sqlFilter, object anonType)
         {
-            return dbConn.Exec(dbCmd => dbCmd.DeleteFmt(tableType, sqlFilter, filterParams));
+            return dbConn.Exec(dbCmd => dbCmd.Delete(tableType, sqlFilter, anonType));
         }
 
         /// <summary>
@@ -282,6 +344,22 @@ namespace ServiceStack.OrmLite
         public static void ExecuteProcedure<T>(this IDbConnection dbConn, T obj)
         {
             dbConn.Exec(dbCmd => dbCmd.ExecuteProcedure(obj));
+        }
+
+        /// <summary>
+        /// Generates inline UPDATE SQL Statement
+        /// </summary>
+        public static string ToUpdateStatement<T>(this IDbConnection dbConn, T item, ICollection<string> updateFields = null)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.GetDialectProvider().ToUpdateStatement(dbCmd, item, updateFields));
+        }
+
+        /// <summary>
+        /// Generates inline INSERT SQL Statement
+        /// </summary>
+        public static string ToInsertStatement<T>(this IDbConnection dbConn, T item, ICollection<string> insertFields = null)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.GetDialectProvider().ToInsertStatement(dbCmd, item, insertFields));
         }
     }
 }

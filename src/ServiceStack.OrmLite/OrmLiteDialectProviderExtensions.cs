@@ -1,5 +1,6 @@
 using System;
 using System.Data;
+using ServiceStack.OrmLite.Converters;
 
 namespace ServiceStack.OrmLite
 {
@@ -7,7 +8,7 @@ namespace ServiceStack.OrmLite
     {
         public static string GetParam(this IOrmLiteDialectProvider dialect, string name)
         {
-            return dialect.ParamString + name;
+            return dialect.ParamString + (dialect.ParamNameFilter?.Invoke(name) ?? name);
         }
 
         public static string GetParam(this IOrmLiteDialectProvider dialect, int indexNo = 0)
@@ -50,6 +51,37 @@ namespace ServiceStack.OrmLite
             return dialect.GetQuotedTableName(tableDef) +
                 "." +
                 dialect.GetQuotedColumnName(fieldName);
+        }
+
+        public static object FromDbValue(this IOrmLiteDialectProvider dialect, 
+            IDataReader reader, int columnIndex, Type type)
+        {
+            return dialect.FromDbValue(dialect.GetValue(reader, columnIndex, type), type);
+        }
+
+        public static IOrmLiteConverter GetConverter<T>(this IOrmLiteDialectProvider dialect)
+        {
+            return dialect.GetConverter(typeof(T));
+        }
+
+        public static bool HasConverter(this IOrmLiteDialectProvider dialect, Type type)
+        {
+            return dialect.GetConverter(type) != null;
+        }
+
+        public static StringConverter GetStringConverter(this IOrmLiteDialectProvider dialect)
+        {
+            return (StringConverter)dialect.GetConverter(typeof(string));
+        }
+
+        public static DecimalConverter GetDecimalConverter(this IOrmLiteDialectProvider dialect)
+        {
+            return (DecimalConverter)dialect.GetConverter(typeof(decimal));
+        }
+
+        public static DateTimeConverter GetDateTimeConverter(this IOrmLiteDialectProvider dialect)
+        {
+            return (DateTimeConverter)dialect.GetConverter(typeof(DateTime));
         }
     }
 }

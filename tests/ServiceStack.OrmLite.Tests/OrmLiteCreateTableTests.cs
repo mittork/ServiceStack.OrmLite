@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using ServiceStack.Common.Tests.Models;
+using ServiceStack.OrmLite.Converters;
 using ServiceStack.OrmLite.Tests.Shared;
 using ServiceStack.Text;
 
@@ -144,20 +145,58 @@ namespace ServiceStack.OrmLite.Tests
         }
 
         [Test]
+        public void Can_change_schema_definitions()
+        {
+            using (var db = OpenDbConnection())
+            {
+                var insertDate = new DateTime(2014, 1, 1);
+
+                db.DropAndCreateTable<AuditTableA>();
+                var before = db.GetLastSql();
+
+                var idA = db.Insert(new AuditTableA { CreatedDate = insertDate }, selectIdentity: true);
+                var insertRowA = db.SingleById<AuditTableA>(idA);
+                Assert.That(insertRowA.CreatedDate, Is.EqualTo(insertDate));
+
+                var stringConverter = OrmLiteConfig.DialectProvider.GetStringConverter();
+                var hold = stringConverter.UseUnicode;
+                stringConverter.UseUnicode = true;
+
+                db.DropAndCreateTable<AuditTableA>();
+                db.GetLastSql().Print();
+
+                stringConverter.UseUnicode = hold;
+
+                db.DropAndCreateTable<AuditTableA>();
+                var after = db.GetLastSql();
+
+                Assert.That(after, Is.EqualTo(before));
+
+                idA = db.Insert(new AuditTableA { CreatedDate = insertDate }, selectIdentity: true);
+                insertRowA = db.SingleById<AuditTableA>(idA);
+                Assert.That(insertRowA.CreatedDate, Is.EqualTo(insertDate));
+            }
+        }
+
+        [Test]
         public void Can_create_ModelWithIdAndName_table_with_specified_DefaultStringLength()
         {
-            OrmLiteConfig.DialectProvider.DefaultStringLength = 255;
+            var converter = OrmLiteConfig.DialectProvider.GetStringConverter();
+            var hold = converter.StringLength;
+            converter.StringLength = 255;
             var createTableSql = OrmLiteConfig.DialectProvider.ToCreateTableStatement(typeof(ModelWithIdAndName));
 
             Console.WriteLine("createTableSql: " + createTableSql);
             if (Dialect != Dialect.PostgreSql)
             {
-                Assert.That(createTableSql, Is.StringContaining("VARCHAR(255)").Or.StringContaining("VARCHAR2(255)"));
+                Assert.That(createTableSql, Does.Contain("VARCHAR(255)").
+                                            Or.Contain("VARCHAR2(255)"));
             }
             else
             {
-                Assert.That(createTableSql, Is.StringContaining("text"));
+                Assert.That(createTableSql, Does.Contain("TEXT"));
             }
+            converter.StringLength = hold;
         }
 
         public class ModelWithGuid
@@ -379,6 +418,76 @@ namespace ServiceStack.OrmLite.Tests
                 results.PrintDump();
 
                 Assert.That(results.Count, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void Does_CreateTableIfNotExists()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropTable<ModelWithIdOnly>();
+
+                if (db.CreateTableIfNotExists<ModelWithIdOnly>())
+                {
+                    db.Insert(new ModelWithIdOnly(1));
+                }
+                if (db.CreateTableIfNotExists<ModelWithIdOnly>())
+                {
+                    db.Insert(new ModelWithIdOnly(2));
+                }
+                var rows = db.Select<ModelWithIdOnly>();
+                Assert.That(rows.Count, Is.EqualTo(1));
+                Assert.That(rows[0].Id, Is.EqualTo(1));
+            }
+        }
+
+        public class TableWithIgnoredFields
+        {
+            public int Id { get; set; }
+
+            public string FirstName { get; set; }
+
+            public string LastName { get; set; }
+
+            public string DisplayName
+            {
+                get { return FirstName + " " + LastName; }
+            }
+
+            [DataAnnotations.Ignore]
+            public int IsIgnored { get; set; }
+
+            public Nested Nested { get; set; }
+        }
+
+        public class Nested
+        {
+            public string Name { get { return "Foo"; } }
+        }
+
+        [Test]
+        public void Does_not_create_table_with_ignored_field()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<TableWithIgnoredFields>();
+
+                Assert.That(db.GetLastSql(), Does.Contain("DisplayName".SqlColumnRaw()));
+                Assert.That(db.GetLastSql(), Does.Not.Contain("IsIgnored".SqlColumnRaw()));
+
+                db.Insert(new TableWithIgnoredFields
+                {
+                    Id = 1,
+                    FirstName = "Foo",
+                    LastName = "Bar",
+                    IsIgnored = 10,
+                });
+
+                var row = db.Select<TableWithIgnoredFields>()[0];
+
+                Assert.That(row.DisplayName, Is.EqualTo("Foo Bar"));
+                Assert.That(row.IsIgnored, Is.EqualTo(0));
             }
         }
     }

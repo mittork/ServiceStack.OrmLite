@@ -62,12 +62,19 @@ namespace ServiceStack.OrmLite.Tests
             results.PrintDump();
             var ids = results.ConvertAll(x => x.Id);
             Assert.AreEqual(new[] { 1, 2, 3, 4, 5, 6 }, ids);
+
+            SqlServerDialect.Provider.ExecFilter = null;
+            SqliteDialect.Provider.ExecFilter = null;
         }
 
         public class MockExecFilter1 : OrmLiteExecFilter
         {
             public override T Exec<T>(IDbConnection dbConn, Func<IDbCommand, T> filter) {
+#if NETCORE                
+                var isCmd = System.Reflection.TypeExtensions.IsAssignableFrom(typeof(IDbCommand), typeof(T));
+#else
                 var isCmd = typeof(IDbCommand).IsAssignableFrom(typeof(T));
+#endif
                 var dbCmd = CreateCommand(dbConn);
                 Stopwatch watch = Stopwatch.StartNew();
                 try {
@@ -86,7 +93,11 @@ namespace ServiceStack.OrmLite.Tests
         public class MockExecFilter2 : OrmLiteExecFilter
         {
             public override T Exec<T>(IDbConnection dbConn, Func<IDbCommand, T> filter) {
+#if NETCORE                
+                var isCmd = System.Reflection.TypeExtensions.IsAssignableFrom(typeof(IDbCommand), typeof(T));
+#else
                 var isCmd = typeof(IDbCommand).IsAssignableFrom(typeof(T));
+#endif
                 var dbCmd = CreateCommand(dbConn);
                 Stopwatch watch = Stopwatch.StartNew();
                 try {

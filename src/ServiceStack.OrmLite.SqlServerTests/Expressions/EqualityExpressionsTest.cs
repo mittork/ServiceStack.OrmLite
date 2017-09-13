@@ -4,8 +4,6 @@ namespace ServiceStack.OrmLite.SqlServerTests.Expressions
 {
     public class EqualityExpressionsTest : ExpressionsTestBase
     {
-        #region int tests
-
         [Test]
         public void Can_select_equals_constant_int_expression()
         {
@@ -128,9 +126,6 @@ namespace ServiceStack.OrmLite.SqlServerTests.Expressions
             CollectionAssert.DoesNotContain(actual, expected);
         }
 
-        #endregion
-
-        #region bool test
 
         [Test]
         public void Can_select_equals_constant_bool_expression()
@@ -257,6 +252,54 @@ namespace ServiceStack.OrmLite.SqlServerTests.Expressions
         }
 
         // Assume not equal works ;-)
-        #endregion
+
+        [Test]
+        public void Can_select_equals_coalesce_on_the_left_expression()
+        {
+            // ReSharper disable ConvertToConstant.Local
+            object stringVal = "sometext";
+            // ReSharper restore ConvertToConstant.Local
+
+            var expected = new TestType()
+            {
+                IntColumn = 12,
+                BoolColumn = false,
+                StringColumn = "test",
+                NullableCol = "sometext"
+            };
+
+            EstablishContext(10, expected);
+
+            var actual = OpenDbConnection().Select<TestType>(q => (q.NullableCol ?? "othertext") == stringVal);
+
+            Assert.IsNotNull(actual);
+            Assert.AreEqual(actual.Count, 1);                   // this passes, because PARAMS: @0=othertext, @1=sometext
+            CollectionAssert.Contains(actual, expected);
+        }
+
+        [Test]
+        public void Can_select_equals_coalesce_on_the_right_expression()
+        {
+            // ReSharper disable ConvertToConstant.Local
+            object stringVal = "sometext";
+            // ReSharper restore ConvertToConstant.Local
+
+            var expected = new TestType()
+            {
+                IntColumn = 12,
+                BoolColumn = false,
+                StringColumn = "test",
+                NullableCol = "sometext"
+            };
+
+            EstablishContext(10, expected);
+
+            var actual = OpenDbConnection().Select<TestType>(q => stringVal == (q.NullableCol ?? "othertext"));
+
+            Assert.IsNotNull(actual);
+            Assert.AreEqual(actual.Count, 1);                  // this will fail for now, because PARAMS: @0=othertext, @1={Text:"COALESCE(""NullableCol"",@0)"}
+            CollectionAssert.Contains(actual, expected);       // this will fail as well
+        }
+
     }
 }

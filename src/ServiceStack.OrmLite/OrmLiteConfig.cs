@@ -4,7 +4,7 @@
 // Authors:
 //   Demis Bellot (demis.bellot@gmail.com)
 //
-// Copyright 2013 Service Stack LLC. All Rights Reserved.
+// Copyright 2013 ServiceStack, Inc. All Rights Reserved.
 //
 // Licensed under the same terms of ServiceStack.
 //
@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using ServiceStack.Logging;
 
 namespace ServiceStack.OrmLite
 {
@@ -26,9 +27,7 @@ namespace ServiceStack.OrmLite
         {
             get
             {
-                if (commandTimeout != null)
-                    return commandTimeout.Value;
-                return defaultCommandTimeout;
+                return commandTimeout ?? defaultCommandTimeout;
             }
             set
             {
@@ -107,7 +106,7 @@ namespace ServiceStack.OrmLite
         {
             var ormLiteConn = db as OrmLiteConnection;
             if (ormLiteConn == null)
-                throw new NotImplementedException(RequiresOrmLiteConnection.Fmt("CommandTimeout"));
+                throw new NotImplementedException(string.Format(RequiresOrmLiteConnection,"CommandTimeout"));
 
             ormLiteConn.CommandTimeout = commandTimeout;
         }
@@ -149,17 +148,24 @@ namespace ServiceStack.OrmLite
             return dbConn;
         }
 
+        public static void ResetLogFactory(ILogFactory logFactory)
+        {
+            LogManager.LogFactory = logFactory;
+            OrmLiteResultsFilterExtensions.Log = LogManager.LogFactory.GetLogger(typeof(OrmLiteResultsFilterExtensions));
+        }
+
         public static bool DisableColumnGuessFallback { get; set; }
-        public static bool StripUpperInLike { get; set; }
+        public static bool StripUpperInLike { get; set; } 
+#if NETSTANDARD1_3
+            = true;
+#endif
 
         public static IOrmLiteResultsFilter ResultsFilter
         {
             get
             {
                 var state = OrmLiteContext.OrmLiteState;
-                return state != null 
-                    ? state.ResultsFilter
-                    : null;
+                return state?.ResultsFilter;
             }
             set { OrmLiteContext.GetOrCreateState().ResultsFilter = value; }
         }
@@ -181,7 +187,25 @@ namespace ServiceStack.OrmLite
 
         public static Action<IDbCommand, object> InsertFilter { get; set; }
         public static Action<IDbCommand, object> UpdateFilter { get; set; }
+        public static Action<IUntypedSqlExpression> SqlExpressionSelectFilter { get; set; }
 
         public static Func<string, string> StringFilter { get; set; }
+
+        public static Func<FieldDefinition, object> OnDbNullFilter { get; set; }
+
+        public static Action<IDbCommand, Exception> ExceptionFilter { get; set; }
+
+        public static bool ThrowOnError { get; set; }
+
+        public static Func<string, string> SanitizeFieldNameForParamNameFn = fieldName =>
+            (fieldName ?? "").Replace(" ", "");
+
+        public static bool IsCaseInsensitive { get; set; }
+
+        public static bool DeoptimizeReader { get; set; }
+
+        public static bool SkipForeignKeys { get; set; }
+
+        public static Func<string, string> ParamNameFilter { get; set; }
     }
 }

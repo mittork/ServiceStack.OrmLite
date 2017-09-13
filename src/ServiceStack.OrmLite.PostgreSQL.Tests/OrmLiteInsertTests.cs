@@ -113,10 +113,10 @@ namespace ServiceStack.OrmLite.Tests
                 var row2 = new ModelWithIdAndName1() { Name = "B", Id = 5 };
 
                 var row1LastInsertId = db.Insert(row1, selectIdentity: true);
-                Assert.That(db.GetLastSql(), Is.StringEnding(") RETURNING id"));
+                Assert.That(db.GetLastSql(), Does.Match("\\) RETURNING \"?[Ii]d"));
 
                 var row2LastInsertId = db.Insert(row2, selectIdentity: true);
-                Assert.That(db.GetLastSql(), Is.StringEnding(") RETURNING id"));
+                Assert.That(db.GetLastSql(), Does.Match("\\) RETURNING \"?[Ii]d"));
 
                 var insertedRow1 = db.SingleById<ModelWithIdAndName1>(row1LastInsertId);
                 var insertedRow2 = db.SingleById<ModelWithIdAndName1>(row2LastInsertId);
@@ -129,7 +129,7 @@ namespace ServiceStack.OrmLite.Tests
         [Test]
         public void Can_retrieve_LastInsertId_from_inserted_table_with_LastVal()
         {
-            PostgreSQL.PostgreSQLDialectProvider.Instance.UseReturningForLastInsertId = false;
+            PostgreSQL.PostgreSqlDialectProvider.Instance.UseReturningForLastInsertId = false;
             using (var db = OpenDbConnection())
             {
                 db.DropAndCreateTable<ModelWithIdAndName>();
@@ -138,10 +138,10 @@ namespace ServiceStack.OrmLite.Tests
                 var row2 = ModelWithIdAndName.Create(6);
 
                 var row1LastInsertId = db.Insert(row1, selectIdentity: true);
-                Assert.That(db.GetLastSql(), Is.StringEnding("; SELECT LASTVAL()"));
+                Assert.That(db.GetLastSql(), Does.EndWith("; SELECT LASTVAL()"));
 
                 var row2LastInsertId = db.Insert(row2, selectIdentity: true);
-                Assert.That(db.GetLastSql(), Is.StringEnding("; SELECT LASTVAL()"));
+                Assert.That(db.GetLastSql(), Does.EndWith("; SELECT LASTVAL()"));
 
                 var insertedRow1 = db.SingleById<ModelWithIdAndName>(row1LastInsertId);
                 var insertedRow2 = db.SingleById<ModelWithIdAndName>(row2LastInsertId);
@@ -149,7 +149,7 @@ namespace ServiceStack.OrmLite.Tests
                 Assert.That(insertedRow1.Name, Is.EqualTo(row1.Name));
                 Assert.That(insertedRow2.Name, Is.EqualTo(row2.Name));
             }
-            PostgreSQL.PostgreSQLDialectProvider.Instance.UseReturningForLastInsertId = true;
+            PostgreSQL.PostgreSqlDialectProvider.Instance.UseReturningForLastInsertId = true;
         }
 
         [Test]
@@ -211,8 +211,13 @@ namespace ServiceStack.OrmLite.Tests
         public void Can_insert_datetimeoffsets_regardless_of_current_culture()
         {
             // datetimeoffset's default .ToString depends on culture, ensure we use one with MDY
+#if NETCORE
+            var previousCulture = CultureInfo.CurrentCulture;
+            CultureInfo.CurrentCulture = new CultureInfo("en-US");
+#else            
             var previousCulture = System.Threading.Thread.CurrentThread.CurrentCulture;
-            System.Threading.Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
+            System.Threading.Thread.CurrentThread.CurrentCulture = new CultureInfo("en-US");
+#endif
             try
             {
                 using (var db = OpenDbConnection())
@@ -239,7 +244,11 @@ namespace ServiceStack.OrmLite.Tests
             }
             finally
             {
+#if NETCORE
+                CultureInfo.CurrentCulture = previousCulture;
+#else
                 System.Threading.Thread.CurrentThread.CurrentCulture = previousCulture;
+#endif
             }
         }
 

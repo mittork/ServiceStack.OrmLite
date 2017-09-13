@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Text.RegularExpressions;
 using System.Threading;
 using ServiceStack.Text;
+using PropertyAttributes = System.Reflection.PropertyAttributes;
 
 namespace ServiceStack.OrmLite
 {
@@ -54,7 +56,7 @@ namespace ServiceStack.OrmLite
                 if (cmdParams == null) return;
                 foreach (var pi in cmdParams.GetType().GetPublicProperties())
                 {
-                    var getterFn = pi.GetPropertyGetterFn();
+                    var getterFn = pi.CreateGetter();
                     if (getterFn == null) continue;
                     var value = getterFn(cmdParams);
                     properties.Add(new Property(pi.Name, pi.PropertyType, value));
@@ -67,11 +69,17 @@ namespace ServiceStack.OrmLite
             public object CreateDynamicType()
             {
                 var assemblyName = new AssemblyName { Name = "tmpAssembly" };
+#if NETSTANDARD1_3
+                var typeBuilder =
+                    AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run)
+                    .DefineDynamicModule("tmpModule")
+                    .DefineType("SqlBuilderDynamicParameters", TypeAttributes.Public | TypeAttributes.Class);
+#else
                 var typeBuilder =
                     Thread.GetDomain().DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run)
                     .DefineDynamicModule("tmpModule")
                     .DefineType("SqlBuilderDynamicParameters", TypeAttributes.Public | TypeAttributes.Class);
-
+#endif
                 var emptyCtor = typeBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
                 var ctorIL = emptyCtor.GetILGenerator();
 
@@ -136,7 +144,11 @@ namespace ServiceStack.OrmLite
 
                 ctorIL.Emit(OpCodes.Ret);
 
+#if NETSTANDARD1_3
+                var generetedType = typeBuilder.CreateTypeInfo().AsType();
+#else
                 var generetedType = typeBuilder.CreateType();
+#endif
                 var instance = Activator.CreateInstance(generetedType);
 
                 //Using reflection for less property types. Not caching since it's a generated type.
@@ -214,6 +226,8 @@ namespace ServiceStack.OrmLite
 
             public string RawSql { get { ResolveSql(); return rawSql; } }
             public object Parameters { get { ResolveSql(); return parameters; } }
+
+            public List<IDbDataParameter> Params { get; private set; }
 
             public string ToSelectStatement()
             {

@@ -1,4 +1,5 @@
 ﻿using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using ServiceStack.Common.Tests.Models;
 using ServiceStack.Text;
@@ -28,7 +29,7 @@ namespace ServiceStack.OrmLite.Tests
                 db.DropAndCreateTable<Poco>();
                 db.Exec(cmd => Assert.That(cmd.CommandTimeout, Is.EqualTo(100)));
 
-                db.SetCommandTimeout(666);
+                db.SetCommandTimeout(200);
 
                 "{0}:{1}".Print(OrmLiteContext.OrmLiteState, Thread.CurrentThread.ManagedThreadId);
 
@@ -45,7 +46,7 @@ namespace ServiceStack.OrmLite.Tests
                 "{0}:{1}".Print(OrmLiteContext.OrmLiteState, Thread.CurrentThread.ManagedThreadId);
 
                 db.Insert(new Poco { Name = "Foo" });
-                db.Exec(cmd => Assert.That(cmd.CommandTimeout, Is.EqualTo(666)));
+                db.Exec(cmd => Assert.That(cmd.CommandTimeout, Is.EqualTo(200)));
             }
 
             using (var db = OpenDbConnection())
@@ -55,6 +56,46 @@ namespace ServiceStack.OrmLite.Tests
                 db.Exec(cmd => Assert.That(cmd.CommandTimeout, Is.EqualTo(100)));
             }
         }
-    }
 
+        [Test]
+        public async Task Can_override_timeout_for_specific_command_Async()
+        {
+            base.DbFactory.AutoDisposeConnection = true; //Turn off :memory: re-use of dbConn
+
+            OrmLiteConfig.CommandTimeout = 100;
+
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<Poco>();
+                db.Exec(cmd => Assert.That(cmd.CommandTimeout, Is.EqualTo(100)));
+
+                db.SetCommandTimeout(666);
+
+                "{0}:{1}".Print(OrmLiteContext.OrmLiteState, Thread.CurrentThread.ManagedThreadId);
+
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    using (var dbInner = OpenDbConnection())
+                    {
+                        "inner {0}:{1}".Print(OrmLiteContext.OrmLiteState, Thread.CurrentThread.ManagedThreadId);
+                        dbInner.SetCommandTimeout(1);
+                    }
+                });
+                Thread.Sleep(10);
+
+                "{0}:{1}".Print(OrmLiteContext.OrmLiteState, Thread.CurrentThread.ManagedThreadId);
+
+                await db.InsertAsync(new Poco { Name = "Foo" });
+                db.Exec(cmd => Assert.That(cmd.CommandTimeout, Is.EqualTo(666)));
+            }
+
+            using (var db = OpenDbConnection())
+            {
+                db.CreateTableIfNotExists<Poco>(); //Sqlite :memory: AutoDisposeConnection = true
+                (await db.SelectAsync<Poco>()).PrintDump();
+                db.Exec(cmd => Assert.That(cmd.CommandTimeout, Is.EqualTo(100)));
+            }
+        }
+
+    }
 }

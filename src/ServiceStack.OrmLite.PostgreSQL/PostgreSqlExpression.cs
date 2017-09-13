@@ -11,15 +11,19 @@ namespace ServiceStack.OrmLite.PostgreSQL
         {
             if (useFieldName)
             {
-                var fd = tableDef.FieldDefinitions.FirstOrDefault(x => x.Name == memberName);
-                if (fd != null && fd.IsRowVersion && !PrefixFieldWithTableName)
-                {
-                    return PostgreSQLDialectProvider.RowVersionFieldComparer;
-                }
+                var fieldDef = tableDef.FieldDefinitions.FirstOrDefault(x => x.Name == memberName);
+                if (fieldDef != null && fieldDef.IsRowVersion && !PrefixFieldWithTableName)
+                    return PostgreSqlDialectProvider.RowVersionFieldComparer;
 
                 return base.GetQuotedColumnName(tableDef, memberName);
             }
             return memberName;
         }
+
+        public override SqlExpression<T> OrderByRandom()
+        {
+            return base.OrderBy("RANDOM()");
+        }
     }
+
 }

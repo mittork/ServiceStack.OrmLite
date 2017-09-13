@@ -3,14 +3,17 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
+using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite
 {
+    public delegate string JoinFormatDelegate(IOrmLiteDialectProvider dialect, ModelDefinition tableDef, string joinExpr);
+
     public abstract partial class SqlExpression<T> : ISqlExpression
     {
-        List<ModelDefinition> tableDefs = new List<ModelDefinition>();
+        protected List<ModelDefinition> tableDefs = new List<ModelDefinition>();
 
-        bool IsJoinedTable(Type type)
+        public bool IsJoinedTable(Type type)
         {
             return tableDefs.FirstOrDefault(x => x.ModelType == type) != null;
         }
@@ -20,9 +23,22 @@ namespace ServiceStack.OrmLite
             return InternalJoin("INNER JOIN", joinExpr);
         }
 
+        public SqlExpression<T> Join<Target>(Expression<Func<T, Target, bool>> joinExpr, JoinFormatDelegate joinFormat)
+        {
+            if (joinFormat == null)
+                throw new ArgumentNullException(nameof(joinFormat));
+
+            return InternalJoin("INNER JOIN", joinExpr, joinFormat);
+        }
+
         public SqlExpression<T> Join<Source, Target>(Expression<Func<Source, Target, bool>> joinExpr = null)
         {
             return InternalJoin("INNER JOIN", joinExpr);
+        }
+
+        public SqlExpression<T> Join<Source, Target>(Expression<Func<Source, Target, bool>> joinExpr, JoinFormatDelegate joinFormat)
+        {
+            return InternalJoin("INNER JOIN", joinExpr, joinFormat);
         }
 
         public SqlExpression<T> Join(Type sourceType, Type targetType, Expression joinExpr = null)
@@ -35,9 +51,22 @@ namespace ServiceStack.OrmLite
             return InternalJoin("LEFT JOIN", joinExpr);
         }
 
+        public SqlExpression<T> LeftJoin<Target>(Expression<Func<T, Target, bool>> joinExpr, JoinFormatDelegate joinFormat)
+        {
+            if (joinFormat == null)
+                throw new ArgumentNullException(nameof(joinFormat));
+
+            return InternalJoin("LEFT JOIN", joinExpr, joinFormat);
+        }
+
         public SqlExpression<T> LeftJoin<Source, Target>(Expression<Func<Source, Target, bool>> joinExpr = null)
         {
             return InternalJoin("LEFT JOIN", joinExpr);
+        }
+
+        public SqlExpression<T> LeftJoin<Source, Target>(Expression<Func<Source, Target, bool>> joinExpr, JoinFormatDelegate joinFormat)
+        {
+            return InternalJoin("LEFT JOIN", joinExpr, joinFormat);
         }
 
         public SqlExpression<T> LeftJoin(Type sourceType, Type targetType, Expression joinExpr = null)
@@ -50,9 +79,22 @@ namespace ServiceStack.OrmLite
             return InternalJoin("RIGHT JOIN", joinExpr);
         }
 
+        public SqlExpression<T> RightJoin<Target>(Expression<Func<T, Target, bool>> joinExpr, JoinFormatDelegate joinFormat)
+        {
+            if (joinFormat == null)
+                throw new ArgumentNullException(nameof(joinFormat));
+
+            return InternalJoin("RIGHT JOIN", joinExpr, joinFormat);
+        }
+
         public SqlExpression<T> RightJoin<Source, Target>(Expression<Func<Source, Target, bool>> joinExpr = null)
         {
             return InternalJoin("RIGHT JOIN", joinExpr);
+        }
+
+        public SqlExpression<T> RightJoin<Source, Target>(Expression<Func<Source, Target, bool>> joinExpr, JoinFormatDelegate joinFormat)
+        {
+            return InternalJoin("RIGHT JOIN", joinExpr, joinFormat);
         }
 
         public SqlExpression<T> FullJoin<Target>(Expression<Func<T, Target, bool>> joinExpr = null)
@@ -75,8 +117,15 @@ namespace ServiceStack.OrmLite
             return InternalJoin("CROSS JOIN", joinExpr);
         }
 
-        private SqlExpression<T> InternalJoin<Source, Target>(string joinType, 
-            Expression<Func<Source, Target, bool>> joinExpr)
+        protected SqlExpression<T> InternalJoin<Source, Target>(string joinType, Expression<Func<Source, Target, bool>> joinExpr, JoinFormatDelegate joinFormat = null)
+        {
+            var sourceDef = typeof(Source).GetModelDefinition();
+            var targetDef = typeof(Target).GetModelDefinition();
+
+            return InternalJoin(joinType, joinExpr, sourceDef, targetDef, joinFormat);
+        }
+
+        protected SqlExpression<T> InternalJoin<Source, Target>(string joinType, Expression joinExpr)
         {
             var sourceDef = typeof(Source).GetModelDefinition();
             var targetDef = typeof(Target).GetModelDefinition();
@@ -84,9 +133,19 @@ namespace ServiceStack.OrmLite
             return InternalJoin(joinType, joinExpr, sourceDef, targetDef);
         }
 
+        public SqlExpression<T> Join<Source, Target, T3>(Expression<Func<Source, Target, T3, bool>> joinExpr) => InternalJoin<Source, Target>("INNER JOIN", joinExpr);
+        public SqlExpression<T> LeftJoin<Source, Target, T3>(Expression<Func<Source, Target, T3, bool>> joinExpr) => InternalJoin<Source, Target>("LEFT JOIN", joinExpr);
+        public SqlExpression<T> RightJoin<Source, Target, T3>(Expression<Func<Source, Target, T3, bool>> joinExpr) => InternalJoin<Source, Target>("RIGHT JOIN", joinExpr);
+        public SqlExpression<T> FullJoin<Source, Target, T3>(Expression<Func<Source, Target, T3, bool>> joinExpr) => InternalJoin<Source, Target>("FULL JOIN", joinExpr);
+
+        public SqlExpression<T> Join<Source, Target, T3, T4>(Expression<Func<Source, Target, T3, T4, bool>> joinExpr) => InternalJoin<Source, Target>("INNER JOIN", joinExpr);
+        public SqlExpression<T> LeftJoin<Source, Target, T3, T4>(Expression<Func<Source, Target, T3, T4, bool>> joinExpr) => InternalJoin<Source, Target>("LEFT JOIN", joinExpr);
+        public SqlExpression<T> RightJoin<Source, Target, T3, T4>(Expression<Func<Source, Target, T3, T4, bool>> joinExpr) => InternalJoin<Source, Target>("RIGHT JOIN", joinExpr);
+        public SqlExpression<T> FullJoin<Source, Target, T3, T4>(Expression<Func<Source, Target, T3, T4, bool>> joinExpr) => InternalJoin<Source, Target>("FULL JOIN", joinExpr);
+
         private string InternalCreateSqlFromExpression(Expression joinExpr, bool isCrossJoin) 
         {
-            return "{0} {1}".Fmt((isCrossJoin ? "WHERE" : "ON"), Visit(joinExpr).ToString());
+            return $"{(isCrossJoin ? "WHERE" : "ON")} {VisitJoin(joinExpr)}";
         }
 
         private string InternalCreateSqlFromDefinitions(ModelDefinition sourceDef, ModelDefinition targetDef, bool isCrossJoin) 
@@ -105,12 +164,12 @@ namespace ServiceStack.OrmLite
             if (refField == null) 
             {
                 if(!isCrossJoin)
-                    throw new ArgumentException("Could not infer relationship between {0} and {1}".Fmt(sourceDef.ModelName, targetDef.ModelName));
+                    throw new ArgumentException($"Could not infer relationship between {sourceDef.ModelName} and {targetDef.ModelName}");
 
                 return string.Empty;
             }
 
-            return "{0}\n({1}.{2} = {3}.{4})".Fmt(
+            return string.Format("{0}\n({1}.{2} = {3}.{4})",
                 isCrossJoin ? "WHERE" : "ON",
                 DialectProvider.GetQuotedTableName(parentDef),
                 SqlColumn(parentDef.PrimaryKey.FieldName),
@@ -125,8 +184,7 @@ namespace ServiceStack.OrmLite
             return this;
         }
 
-        private SqlExpression<T> InternalJoin(string joinType, 
-            Expression joinExpr, ModelDefinition sourceDef, ModelDefinition targetDef)
+        protected virtual SqlExpression<T> InternalJoin(string joinType, Expression joinExpr, ModelDefinition sourceDef, ModelDefinition targetDef, JoinFormatDelegate joinFormat = null)
         {
             PrefixFieldWithTableName = true;
 
@@ -134,46 +192,92 @@ namespace ServiceStack.OrmLite
             useFieldName = true;
             sep = " ";
 
+            if (!tableDefs.Contains(sourceDef))
+                tableDefs.Add(sourceDef);
+            if (!tableDefs.Contains(targetDef))
+                tableDefs.Add(targetDef);
+
             var isCrossJoin = "CROSS JOIN".Equals(joinType);
+
             var sqlExpr = joinExpr != null 
                 ? InternalCreateSqlFromExpression(joinExpr, isCrossJoin)
                 : InternalCreateSqlFromDefinitions(sourceDef, targetDef, isCrossJoin);
 
             var joinDef = tableDefs.Contains(targetDef) && !tableDefs.Contains(sourceDef)
-                              ? sourceDef
-                              : targetDef;
+                ? sourceDef
+                : targetDef;
 
-            FromExpression += " {0} {1} {2}".Fmt(joinType, SqlTable(joinDef), sqlExpr);
-
-            if (!tableDefs.Contains(sourceDef))
-                tableDefs.Add(sourceDef);
-            if (!tableDefs.Contains(targetDef))
-                tableDefs.Add(targetDef);
+            FromExpression += joinFormat != null
+                ? $" {joinType} {joinFormat(DialectProvider, joinDef, sqlExpr)}"
+                : $" {joinType} {SqlTable(joinDef)} {sqlExpr}";
 
             return this;
         }
 
         public string SelectInto<TModel>()
         {
-            if (CustomSelect || (typeof(TModel) == typeof(T) && !PrefixFieldWithTableName))
+            if ((CustomSelect && OnlyFields == null) || (typeof(TModel) == typeof(T) && !PrefixFieldWithTableName))
             {
                 return ToSelectStatement();
             }
 
-            var sbSelect = new StringBuilder();
-            var selectDef = typeof(TModel).GetModelDefinition();
+            useFieldName = true;
 
+            var sbSelect = StringBuilderCache.Allocate();
+            var selectDef = modelDef;
             var orderedDefs = tableDefs;
-            if (selectDef != modelDef && tableDefs.Contains(selectDef))
+
+            if (typeof(TModel) != typeof(List<object>) && 
+                typeof(TModel) != typeof(Dictionary<string, object>) &&
+                typeof(TModel) != typeof(object)) //dynamic
             {
-                orderedDefs = tableDefs.ToList(); //clone
-                orderedDefs.Remove(selectDef);
-                orderedDefs.Insert(0, selectDef);
+                selectDef = typeof(TModel).GetModelDefinition();
+                if (selectDef != modelDef && tableDefs.Contains(selectDef))
+                {
+                    orderedDefs = tableDefs.ToList(); //clone
+                    orderedDefs.Remove(selectDef);
+                    orderedDefs.Insert(0, selectDef);
+                }
             }
 
             foreach (var fieldDef in selectDef.FieldDefinitions)
             {
                 var found = false;
+
+                if (fieldDef.BelongToModelName != null)
+                {
+                    var tableDef = orderedDefs.FirstOrDefault(x => x.Name == fieldDef.BelongToModelName);
+                    if (tableDef != null)
+                    {
+                        var matchingField = FindWeakMatch(tableDef, fieldDef);
+                        if (matchingField != null)
+                        {
+                            if (OnlyFields == null || OnlyFields.Contains(fieldDef.Name))
+                            {
+                                if (sbSelect.Length > 0)
+                                    sbSelect.Append(", ");
+
+                                if (fieldDef.CustomSelect == null)
+                                {
+                                    if (!fieldDef.IsRowVersion)
+                                    {
+                                        sbSelect.Append($"{GetQuotedColumnName(tableDef, matchingField.Name)} AS {SqlColumn(fieldDef.Name)}");
+                                    }
+                                    else
+                                    {
+                                        sbSelect.Append(DialectProvider.GetRowVersionColumnName(fieldDef, DialectProvider.GetTableName(tableDef.ModelName)));
+                                    }
+                                }
+                                else
+                                {
+                                    sbSelect.Append(fieldDef.CustomSelect + " AS " + fieldDef.FieldName);
+                                }
+
+                                continue;
+                            }
+                        }
+                    }
+                }
 
                 foreach (var tableDef in orderedDefs)
                 {
@@ -181,17 +285,32 @@ namespace ServiceStack.OrmLite
                     {
                         if (tableFieldDef.Name == fieldDef.Name)
                         {
-                            found = true;
+                            if (OnlyFields != null && !OnlyFields.Contains(fieldDef.Name))
+                                continue;
+
                             if (sbSelect.Length > 0)
                                 sbSelect.Append(", ");
 
-                            sbSelect.AppendFormat("{0}.{1}",
-                                SqlTable(tableDef),
-                                tableFieldDef.GetQuotedName(DialectProvider));
+                            if (fieldDef.CustomSelect == null)
+                            {
+                                if (!fieldDef.IsRowVersion)
+                                {
+                                    sbSelect.Append(GetQuotedColumnName(tableDef, tableFieldDef.Name));
 
-                            if (tableFieldDef.Alias != null)
-                                sbSelect.Append(" AS ").Append(SqlColumn(fieldDef.Name));
+                                    if (tableFieldDef.Alias != null)
+                                        sbSelect.Append(" AS ").Append(SqlColumn(fieldDef.Name));
+                                }
+                                else
+                                {
+                                    sbSelect.Append(DialectProvider.GetRowVersionColumnName(fieldDef, DialectProvider.GetTableName(tableDef.ModelName)));
+                                }
+                            }
+                            else
+                            {
+                                sbSelect.Append(tableFieldDef.CustomSelect).Append(" AS ").Append(tableFieldDef.FieldName);
+                            }
 
+                            found = true;
                             break;
                         }
                     }
@@ -205,19 +324,16 @@ namespace ServiceStack.OrmLite
                     // Add support for auto mapping `{Table}{Field}` convention
                     foreach (var tableDef in orderedDefs)
                     {
-                        var matchingField = tableDef.FieldDefinitions
-                            .FirstOrDefault(x =>
-                                string.Compare(tableDef.Name + x.Name, fieldDef.Name, StringComparison.OrdinalIgnoreCase) == 0
-                             || string.Compare(tableDef.ModelName + x.FieldName, fieldDef.Name, StringComparison.OrdinalIgnoreCase) == 0);
-
+                        var matchingField = FindWeakMatch(tableDef, fieldDef);
                         if (matchingField != null)
                         {
+                            if (OnlyFields != null && !OnlyFields.Contains(fieldDef.Name))
+                                continue;
+
                             if (sbSelect.Length > 0)
                                 sbSelect.Append(", ");
 
-                            sbSelect.AppendFormat("{0} as {1}",
-                                DialectProvider.GetQuotedColumnName(tableDef, matchingField),
-                                SqlColumn(fieldDef.Name));
+                            sbSelect.Append($"{DialectProvider.GetQuotedColumnName(tableDef, matchingField)} as {SqlColumn(fieldDef.Name)}");
                             
                             break;
                         }
@@ -225,47 +341,111 @@ namespace ServiceStack.OrmLite
                 }
             }
 
-            var columns = sbSelect.Length > 0 ? sbSelect.ToString() : "*";
+            var select = StringBuilderCache.ReturnAndFree(sbSelect);
+
+            var columns = select.Length > 0 ? select : "*";
             SelectExpression = "SELECT " + (selectDistinct ? "DISTINCT " : "") + columns;
 
             return ToSelectStatement();
         }
 
-        public virtual SqlExpression<T> Where<Target>(Expression<Func<Target, bool>> predicate)
+        private static FieldDefinition FindWeakMatch(ModelDefinition tableDef, FieldDefinition fieldDef)
         {
-            AppendToWhere("AND", predicate);
-            return this;
+            return tableDef.FieldDefinitions
+                .FirstOrDefault(x =>
+                    string.Compare(tableDef.Name + x.Name, fieldDef.Name, StringComparison.OrdinalIgnoreCase) == 0
+                    || string.Compare(tableDef.ModelName + x.FieldName, fieldDef.Name, StringComparison.OrdinalIgnoreCase) == 0);
         }
 
-        public virtual SqlExpression<T> Where<Source, Target>(Expression<Func<Source, Target, bool>> predicate)
-        {
-            AppendToWhere("AND", predicate);
-            return this;
-        }
+        public virtual SqlExpression<T> Where<Target>(Expression<Func<Target, bool>> predicate) => AppendToWhere("AND", predicate);
 
-        public virtual SqlExpression<T> And<Target>(Expression<Func<Target, bool>> predicate)
-        {
-            AppendToWhere("AND", predicate);
-            return this;
-        }
+        public virtual SqlExpression<T> Where<Source, Target>(Expression<Func<Source, Target, bool>> predicate) => AppendToWhere("AND", predicate);
 
-        public virtual SqlExpression<T> And<Source, Target>(Expression<Func<Source, Target, bool>> predicate)
-        {
-            AppendToWhere("AND", predicate);
-            return this;
-        }
+        public virtual SqlExpression<T> Where<T1, T2, T3>(Expression<Func<T1, T2, T3, bool>> predicate) => AppendToWhere("AND", predicate);
 
-        public virtual SqlExpression<T> Or<Target>(Expression<Func<Target, bool>> predicate)
-        {
-            AppendToWhere("OR", predicate);
-            return this;
-        }
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4>(Expression<Func<T1, T2, T3, T4, bool>> predicate) => AppendToWhere("AND", predicate);
 
-        public virtual SqlExpression<T> Or<Source, Target>(Expression<Func<Source, Target, bool>> predicate)
-        {
-            AppendToWhere("OR", predicate);
-            return this;
-        }
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5>(Expression<Func<T1, T2, T3, T4, T5, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6>(Expression<Func<T1, T2, T3, T4, T5, T6, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8, T9>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Where<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<Target>(Expression<Func<Target, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<Source, Target>(Expression<Func<Source, Target, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3>(Expression<Func<T1, T2, T3, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4>(Expression<Func<T1, T2, T3, T4, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5>(Expression<Func<T1, T2, T3, T4, T5, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6>(Expression<Func<T1, T2, T3, T4, T5, T6, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8, T9>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> And<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, bool>> predicate) => AppendToWhere("AND", predicate);
+
+        public virtual SqlExpression<T> Or<Target>(Expression<Func<Target, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<Source, Target>(Expression<Func<Source, Target, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3>(Expression<Func<T1, T2, T3, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4>(Expression<Func<T1, T2, T3, T4, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5>(Expression<Func<T1, T2, T3, T4, T5, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6>(Expression<Func<T1, T2, T3, T4, T5, T6, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8, T9>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, bool>> predicate) => AppendToWhere("OR", predicate);
+
+        public virtual SqlExpression<T> Or<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15>(Expression<Func<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, bool>> predicate) => AppendToWhere("OR", predicate);
 
         public Tuple<ModelDefinition,FieldDefinition> FirstMatchingField(string fieldName)
         {

@@ -31,9 +31,9 @@ namespace ServiceStack.OrmLite.Tests
 BEGIN
 
     IF NOT EXISTS(
-        SELECT schema_name
-          FROM information_schema.schemata
-          WHERE schema_name = 'TestSchema'
+        SELECT 1
+          FROM INFORMATION_SCHEMA.SCHEMATA
+          WHERE SCHEMA_NAME = 'TestSchema'
       )
     THEN
       EXECUTE 'CREATE SCHEMA ""TestSchema""';
@@ -53,11 +53,10 @@ $$;";
                 CreateSchemaIfNotExists(db);
                 db.DropAndCreateTable<User>();
 
-                var tables = db.ColumnFmt<string>
-                    (@"SELECT '[' || n.nspname || '].[' || c.relname ||']' FROM pg_class c LEFT JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'Users' AND n.nspname = 'TestSchema'");
+                var tables = db.Column<string>(@"SELECT '[' || n.nspname || '].[' || c.relname ||']' FROM pg_class c LEFT JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'users' AND n.nspname = 'TestSchema'");
                 
                 //PostgreSQL dialect should create the table in the schema
-                Assert.That(tables.Contains("[TestSchema].[Users]"));
+                Assert.That(tables.Contains("[TestSchema].[users]"));
             }
         }
 
@@ -77,7 +76,7 @@ $$;";
                 var lastInsertId = db.LastInsertId();
                 Assert.That(lastInsertId, Is.GreaterThan(0));
 
-                var rowsB = db.SelectFmt<User>("\"Name\" = {0}", "B");
+                var rowsB = db.Select<User>("\"name\" = @name", new { name = "B" });
                 Assert.That(rowsB, Has.Count.EqualTo(2));
 
                 var rowIds = rowsB.ConvertAll(x => x.Id);
@@ -85,7 +84,7 @@ $$;";
 
                 rowsB.ForEach(x => db.Delete(x));
 
-                rowsB = db.SelectFmt<User>("\"Name\" = {0}", "B");
+                rowsB = db.Select<User>("\"name\" = @name", new { name = "B" });
                 Assert.That(rowsB, Has.Count.EqualTo(0));
 
                 var rowsLeft = db.Select<User>();

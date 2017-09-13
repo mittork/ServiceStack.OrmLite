@@ -11,7 +11,8 @@ namespace ServiceStack.OrmLite.Tests.Expression
         [SetUp]
         public void Setup()
         {
-            OpenDbConnection().CreateTable<TestType>(true);
+            using (var db = OpenDbConnection())
+                db.CreateTable<TestType>(true);
         }
 
         //Avoid painful refactor to change all tests to use a using pattern
@@ -53,39 +54,45 @@ namespace ServiceStack.OrmLite.Tests.Expression
 
         protected void EstablishContext(int numberOfRandomObjects, params TestType[] obj)
         {
+            EstablishContext(null, numberOfRandomObjects, obj);
+        }
+
+        protected void EstablishContext(IDbConnection db, int numberOfRandomObjects, params TestType[] obj)
+        {
             if (obj == null)
                 obj = new TestType[0];
 
-            using (var con = OpenDbConnection())
+            var con = db ?? OpenDbConnection();
+            foreach (var t in obj)
             {
-                foreach (var t in obj)
-                {
-                    con.Insert(t);
-                }
-
-                var random = new Random((int)(DateTime.UtcNow.Ticks ^ (DateTime.UtcNow.Ticks >> 4)));
-                for (var i = 0; i < numberOfRandomObjects; i++)
-                {
-                    TestType o = null;
-
-                    while (o == null)
-                    {
-                        int intVal = random.Next();
-
-                        o = new TestType
-                        {
-                            BoolColumn = random.Next() % 2 == 0,
-                            IntColumn = intVal,
-                            StringColumn = Guid.NewGuid().ToString()
-                        };
-
-                        if (obj.Any(x => x.IntColumn == intVal))
-                            o = null;
-                    }
-
-                    con.Insert(o);
-                }
+                con.Insert(t);
             }
+
+            var random = new Random((int)(DateTime.UtcNow.Ticks ^ (DateTime.UtcNow.Ticks >> 4)));
+            for (var i = 0; i < numberOfRandomObjects; i++)
+            {
+                TestType o = null;
+
+                while (o == null)
+                {
+                    int intVal = random.Next();
+
+                    o = new TestType
+                    {
+                        BoolColumn = random.Next() % 2 == 0,
+                        IntColumn = intVal,
+                        StringColumn = Guid.NewGuid().ToString()
+                    };
+
+                    if (obj.Any(x => x.IntColumn == intVal))
+                        o = null;
+                }
+
+                con.Insert(o);
+            }
+
+            if (db == null)
+                con.Dispose();
         }
     }
 }

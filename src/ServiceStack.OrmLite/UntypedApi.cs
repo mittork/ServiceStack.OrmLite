@@ -16,7 +16,7 @@ namespace ServiceStack.OrmLite
 
         public static IUntypedApi CreateTypedApi(this IDbConnection db, Type forType)
         {
-            var genericType = untypedApiMap.GetOrAdd(forType, key => typeof(UntypedApi<>).MakeGenericType(key));
+            var genericType = untypedApiMap.GetOrAdd(forType, key => typeof(UntypedApi<>).GetCachedGenericType(key));
             var unTypedApi = genericType.CreateInstance<IUntypedApi>();
             unTypedApi.Db = db;
             return unTypedApi;
@@ -24,7 +24,7 @@ namespace ServiceStack.OrmLite
 
         public static IUntypedApi CreateTypedApi(this IDbCommand dbCmd, Type forType)
         {
-            var genericType = untypedApiMap.GetOrAdd(forType, key => typeof(UntypedApi<>).MakeGenericType(key));
+            var genericType = untypedApiMap.GetOrAdd(forType, key => typeof(UntypedApi<>).GetCachedGenericType(key));
             var unTypedApi = genericType.CreateInstance<IUntypedApi>();
             unTypedApi.DbCmd = dbCmd;
             return unTypedApi;
@@ -32,7 +32,7 @@ namespace ServiceStack.OrmLite
 
         public static IUntypedApi CreateTypedApi(this Type forType)
         {
-            var genericType = untypedApiMap.GetOrAdd(forType, key => typeof(UntypedApi<>).MakeGenericType(key));
+            var genericType = untypedApiMap.GetOrAdd(forType, key => typeof(UntypedApi<>).GetCachedGenericType(key));
             var unTypedApi = genericType.CreateInstance<IUntypedApi>();
             return unTypedApi;
         }
@@ -66,7 +66,7 @@ namespace ServiceStack.OrmLite
             return Exec(dbCmd => dbCmd.Save((T)obj));
         }
 
-#if NET45
+#if ASYNC
         public Task<int> SaveAllAsync(IEnumerable objs, CancellationToken token)
         {
             return Exec(dbCmd => dbCmd.SaveAllAsync((IEnumerable<T>)objs, token));
