@@ -53,7 +53,7 @@ namespace ServiceStack.OrmLite.PostgreSQL.Tests.Expressions
                 ev.Where(rn => rn.Birthday >= new DateTime(year, 1, 1) && rn.Birthday <= lastDay);
                 List<Author> result = db.Select(ev);
                 Assert.AreEqual(expected, result.Count);
-                result = db.Select<Author>(qry => qry.Where(rn => rn.Birthday >= new DateTime(year, 1, 1) && rn.Birthday <= lastDay));
+                result = db.Select(db.From<Author>().Where(rn => rn.Birthday >= new DateTime(year, 1, 1) && rn.Birthday <= lastDay));
                 Assert.AreEqual(expected, result.Count);
                 result = db.Select<Author>(rn => rn.Birthday >= new DateTime(year, 1, 1) && rn.Birthday <= lastDay);
                 Assert.AreEqual(expected, result.Count);
@@ -107,7 +107,13 @@ namespace ServiceStack.OrmLite.PostgreSQL.Tests.Expressions
                 //in the string. 
                 //An underscore ("_") in the LIKE pattern matches any single character in the string. 
                 //Any other character matches itself or its lower/upper case equivalent (i.e. case-insensitive matching).
+                //case-sensitivity matching depends on PostgreSQL underlying OS.
+#if NETCORE
+                expected = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux)? 1 : 3;
+#else
                 expected = 3;
+#endif
+
                 ev.Where().Where(rn => rn.Name.EndsWith("garzon"));
                 result = db.Select(ev);
                 Assert.AreEqual(expected, result.Count);
@@ -160,9 +166,8 @@ namespace ServiceStack.OrmLite.PostgreSQL.Tests.Expressions
 
                 // insert values  only in Id, Name, Birthday, Rate and Active fields 
                 expected = 4;
-                ev.Insert(rn => new { rn.Id, rn.Name, rn.Birthday, rn.Active, rn.Rate });
-                db.InsertOnly(new Author() { Active = false, Rate = 0, Name = "Victor Grozny", Birthday = DateTime.Today.AddYears(-18) }, ev);
-                db.InsertOnly(new Author() { Active = false, Rate = 0, Name = "Ivan Chorny", Birthday = DateTime.Today.AddYears(-19) }, ev);
+                db.InsertOnly(new Author() { Active = false, Rate = 0, Name = "Victor Grozny", Birthday = DateTime.Today.AddYears(-18) }, rn => new { rn.Id, rn.Name, rn.Birthday, rn.Active, rn.Rate });
+                db.InsertOnly(new Author() { Active = false, Rate = 0, Name = "Ivan Chorny", Birthday = DateTime.Today.AddYears(-19) }, rn => new { rn.Id, rn.Name, rn.Birthday, rn.Active, rn.Rate });
                 ev.Where().Where(rn => !rn.Active);
                 result = db.Select(ev);
                 Assert.AreEqual(expected, result.Count);
@@ -299,7 +304,7 @@ namespace ServiceStack.OrmLite.PostgreSQL.Tests.Expressions
                     bool r6 = db.Scalar<Author, bool>(e => Sql.Max(e.Active));
                     Assert.AreEqual(expectedBool, r6);
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     //????
                     //if (dialect.Name == "PostgreSQL")

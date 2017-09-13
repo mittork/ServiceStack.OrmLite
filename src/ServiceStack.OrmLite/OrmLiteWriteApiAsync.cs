@@ -1,5 +1,5 @@
-﻿#if NET45
-// Copyright (c) Service Stack LLC. All Rights Reserved.
+﻿#if ASYNC
+// Copyright (c) ServiceStack, Inc. All Rights Reserved.
 // License: https://raw.github.com/ServiceStack/ServiceStack/master/license.txt
 
 using System;
@@ -22,6 +22,15 @@ namespace ServiceStack.OrmLite
         public static Task<int> ExecuteSqlAsync(this IDbConnection dbConn, string sql, CancellationToken token = default(CancellationToken))
         {
             return dbConn.Exec(dbCmd => dbCmd.ExecuteSqlAsync(sql, token));
+        }
+
+        /// <summary>
+        /// Execute any arbitrary raw SQL with db params.
+        /// </summary>
+        /// <returns>number of rows affected</returns>
+        public static Task<int> ExecuteSqlAsync(this IDbConnection dbConn, string sql, object dbParams, CancellationToken token = default(CancellationToken))
+        {
+            return dbConn.Exec(dbCmd => dbCmd.ExecuteSqlAsync(sql, dbParams, token));
         }
 
         /// <summary>
@@ -60,9 +69,9 @@ namespace ServiceStack.OrmLite
         /// Updates 1 POCO. All fields are updated except for the PrimaryKey which is used as the identity selector. E.g:
         /// <para>db.Update(new Person { Id = 1, FirstName = "Jimi", LastName = "Hendrix", Age = 27 })</para>
         /// </summary>
-        public static Task<int> UpdateAsync<T>(this IDbConnection dbConn, T obj, CancellationToken token = default(CancellationToken))
+        public static Task<int> UpdateAsync<T>(this IDbConnection dbConn, T obj, Action<IDbCommand> commandFilter = null, CancellationToken token = default(CancellationToken))
         {
-            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(obj, token));
+            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(obj, token, commandFilter));
         }
 
         /// <summary>
@@ -72,20 +81,28 @@ namespace ServiceStack.OrmLite
         /// </summary>
         public static Task<int> UpdateAsync<T>(this IDbConnection dbConn, CancellationToken token, params T[] objs)
         {
-            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(objs, token));
+            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(token, null, objs));
         }
         public static Task<int> UpdateAsync<T>(this IDbConnection dbConn, params T[] objs)
         {
-            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(default(CancellationToken), objs));
+            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(default(CancellationToken), null, objs));
+        }
+        public static Task<int> UpdateAsync<T>(this IDbConnection dbConn, Action<IDbCommand> commandFilter, CancellationToken token, params T[] objs)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(token, commandFilter, objs));
+        }
+        public static Task<int> UpdateAsync<T>(this IDbConnection dbConn, Action<IDbCommand> commandFilter, params T[] objs)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.UpdateAsync(default(CancellationToken), commandFilter, objs));
         }
 
         /// <summary>
         /// Updates 1 or more POCOs in a transaction. E.g:
         /// <para>db.UpdateAll(new[] { new Person { Id = 1, FirstName = "Jimi", LastName = "Hendrix", Age = 27 } })</para>
         /// </summary>
-        public static Task<int> UpdateAllAsync<T>(this IDbConnection dbConn, IEnumerable<T> objs, CancellationToken token = default(CancellationToken))
+        public static Task<int> UpdateAllAsync<T>(this IDbConnection dbConn, IEnumerable<T> objs, Action<IDbCommand> commandFilter = null, CancellationToken token = default(CancellationToken))
         {
-            return dbConn.Exec(dbCmd => dbCmd.UpdateAllAsync(objs, token));
+            return dbConn.Exec(dbCmd => dbCmd.UpdateAllAsync(objs, token, commandFilter));
         }
 
         /// <summary>
@@ -197,31 +214,14 @@ namespace ServiceStack.OrmLite
             return dbConn.Exec(dbCmd => dbCmd.DeleteAllAsync(tableType, token));
         }
 
-        /// <summary>
-        /// Delete rows using a SqlFormat filter. E.g:
-        /// </summary>
-        /// <returns>number of rows deleted</returns>
-        public static Task<int> DeleteFmtAsync<T>(this IDbConnection dbConn, CancellationToken token, string sqlFilter, params object[] filterParams)
+        public static Task<int> DeleteAsync<T>(this IDbConnection dbConn, string sqlFilter, object anonType, CancellationToken token = default(CancellationToken))
         {
-            return dbConn.Exec(dbCmd => dbCmd.DeleteFmtAsync<T>(token, sqlFilter, filterParams));
-        }
-        public static Task<int> DeleteFmtAsync<T>(this IDbConnection dbConn, string sqlFilter, params object[] filterParams)
-        {
-            return dbConn.Exec(dbCmd => dbCmd.DeleteFmtAsync<T>(default(CancellationToken), sqlFilter, filterParams));
+            return dbConn.Exec(dbCmd => dbCmd.DeleteAsync<T>(sqlFilter, anonType, token));
         }
 
-        /// <summary>
-        /// Delete rows from the runtime table type using a SqlFormat filter. E.g:
-        /// </summary>
-        /// <para>db.DeleteFmt(typeof(Person), "Age = {0}", 27)</para>
-        /// <returns>number of rows deleted</returns>
-        public static Task<int> DeleteFmtAsync(this IDbConnection dbConn, CancellationToken token, Type tableType, string sqlFilter, params object[] filterParams)
+        public static Task<int> DeleteAsync(this IDbConnection dbConn, Type tableType, string sqlFilter, object anonType, CancellationToken token = default(CancellationToken))
         {
-            return dbConn.Exec(dbCmd => dbCmd.DeleteFmtAsync(token, tableType, sqlFilter, filterParams));
-        }
-        public static Task<int> DeleteFmtAsync(this IDbConnection dbConn, Type tableType, string sqlFilter, params object[] filterParams)
-        {
-            return dbConn.Exec(dbCmd => dbCmd.DeleteFmtAsync(default(CancellationToken), tableType, sqlFilter, filterParams));
+            return dbConn.Exec(dbCmd => dbCmd.DeleteAsync(tableType, sqlFilter, anonType, token));
         }
 
         /// <summary>
@@ -230,15 +230,17 @@ namespace ServiceStack.OrmLite
         /// <para>db.SaveAsync(customer, references:true)</para>
         /// </summary>
         /// <returns>true if a row was inserted; false if it was updated</returns>
-        public static Task<bool> SaveAsync<T>(this IDbConnection dbConn, T obj, bool references = false, CancellationToken token = default(CancellationToken))
+        public static async Task<bool> SaveAsync<T>(this IDbConnection dbConn, T obj, bool references = false, CancellationToken token = default(CancellationToken))
         {
             if (!references)
-                return dbConn.Exec(dbCmd => dbCmd.SaveAsync(obj, token));
+                return await dbConn.Exec(dbCmd => dbCmd.SaveAsync(obj, token));
 
-            return dbConn.Exec(dbCmd => 
-                dbCmd.SaveAsync(obj, token).Then(ret => 
-                    dbCmd.SaveAllReferencesAsync(obj, token).Then(t => 
-                        ret))) as Task<bool>;
+            return await dbConn.Exec(async dbCmd =>
+            {
+                var ret = await dbCmd.SaveAsync(obj, token);
+                await dbCmd.SaveAllReferencesAsync(obj, token);
+                return ret;
+            });
         }
 
         /// <summary>

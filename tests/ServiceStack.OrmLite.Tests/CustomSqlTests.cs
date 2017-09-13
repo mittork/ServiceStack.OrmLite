@@ -1,6 +1,9 @@
 ﻿using System;
+using System.Linq;
 using NUnit.Framework;
 using ServiceStack.DataAnnotations;
+using ServiceStack.OrmLite.Tests.Expression;
+using ServiceStack.OrmLite.Tests.Issues;
 using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite.Tests
@@ -76,8 +79,16 @@ namespace ServiceStack.OrmLite.Tests
 
                 createTableSql.Print();
 
-                Assert.That(createTableSql, Is.StringContaining("charcolumn char(20) null"));
-                Assert.That(createTableSql, Is.StringContaining("decimalcolumn decimal(18,4) null"));
+                if (Dialect != Dialect.Firebird)
+                {
+                    Assert.That(createTableSql, Does.Contain("charcolumn char(20) null"));
+                    Assert.That(createTableSql, Does.Contain("decimalcolumn decimal(18,4) null"));
+                }
+                else
+                {
+                    Assert.That(createTableSql, Does.Contain("charcolumn char(20)"));
+                    Assert.That(createTableSql, Does.Contain("decimalcolumn decimal(18,4)"));
+                }
             }
         }
 
@@ -102,7 +113,7 @@ namespace ServiceStack.OrmLite.Tests
         public void Does_execute_CustomSql_after_table_created()
         {
             SuppressIfOracle("For Oracle need wrap multiple SQL statements in an anonymous block");
-            if (Dialect == Dialect.PostgreSql || Dialect == Dialect.Oracle) return;
+            if (Dialect == Dialect.PostgreSql || Dialect == Dialect.Oracle || Dialect == Dialect.Firebird) return;
 
             using (var db = OpenDbConnection())
             {
@@ -110,7 +121,7 @@ namespace ServiceStack.OrmLite.Tests
 
                 var seedDataNames = db.Select<ModelWithSeedDataSql>().ConvertAll(x => x.Name);
 
-                Assert.That(seedDataNames, Is.EquivalentTo(new[] { "Foo", "Bar" }));
+                Assert.That(seedDataNames, Is.EquivalentTo(new[] {"Foo", "Bar"}));
             }
         }
 
@@ -118,6 +129,7 @@ namespace ServiceStack.OrmLite.Tests
         public void Does_execute_CustomSql_after_table_created_using_dynamic_attribute()
         {
             SuppressIfOracle("For Oracle need wrap multiple SQL statements in an anonymous block");
+            if (Dialect == Dialect.Oracle || Dialect == Dialect.Firebird) return;
 
             typeof(DynamicAttributeSeedData)
                 .AddAttributes(new PostCreateTableAttribute(
@@ -130,7 +142,7 @@ namespace ServiceStack.OrmLite.Tests
 
                 var seedDataNames = db.Select<DynamicAttributeSeedData>().ConvertAll(x => x.Name);
 
-                Assert.That(seedDataNames, Is.EquivalentTo(new[] { "Foo", "Bar" }));
+                Assert.That(seedDataNames, Is.EquivalentTo(new[] {"Foo", "Bar"}));
             }
         }
 
@@ -170,5 +182,55 @@ namespace ServiceStack.OrmLite.Tests
             }
         }
 
+        public class CustomSelectTest
+        {
+            public int Id { get; set; }
+            public int Width { get; set; }
+            public int Height { get; set; }
+
+            [CustomSelect("Width * Height")]
+            public int Area { get; set; }
+        }
+
+        [Test]
+        public void Can_select_custom_field_expressions()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<CustomSelectTest>();
+
+                db.Insert(new CustomSelectTest {Id = 1, Width = 10, Height = 5});
+
+                var row = db.SingleById<CustomSelectTest>(1);
+
+                Assert.That(row.Area, Is.EqualTo(10 * 5));
+            }
+        }
+
+        [Test]
+        public void Can_Count_Distinct()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<LetterFrequency>();
+
+                var rows = "A,B,B,C,C,C,D,D,E".Split(',').Map(x => new LetterFrequency {Letter = x});
+
+                db.InsertAll(rows);
+
+                var count = db.Count(db.From<LetterFrequency>().Select(x => x.Letter));
+                Assert.That(count, Is.EqualTo(rows.Count));
+
+                count = db.Scalar<long>(db.From<LetterFrequency>().Select(x => Sql.Count(x.Letter)));
+                Assert.That(count, Is.EqualTo(rows.Count));
+
+                var distinctCount = db.Scalar<long>(db.From<LetterFrequency>().Select(x => Sql.CountDistinct(x.Letter)));
+                Assert.That(distinctCount, Is.EqualTo(rows.Map(x => x.Letter).Distinct().Count()));
+
+                distinctCount = db.Scalar<long>(db.From<LetterFrequency>().Select("COUNT(DISTINCT Letter)"));
+                Assert.That(distinctCount, Is.EqualTo(rows.Map(x => x.Letter).Distinct().Count()));
+            }
+        }
+        
     }
 }

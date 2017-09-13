@@ -189,6 +189,7 @@ namespace ServiceStack.OrmLite.Tests.Expression
             }
         }
 
+#pragma warning disable 618
         [Test]
         public void ComplexJoin_with_JoinSqlBuilder()
         {
@@ -225,6 +226,7 @@ namespace ServiceStack.OrmLite.Tests.Expression
                 Assert.That(fooBarBaz.BazId, Is.EqualTo(_baz1Id));
             }
         }
+#pragma warning restore 618
 
         [Test]
         public void ComplexJoin_with_SqlExpression()
@@ -246,8 +248,6 @@ namespace ServiceStack.OrmLite.Tests.Expression
 
                 var fooBarBaz = results.First(x => x.FooBarBazId == _fooBarBaz1Id);
                 Assert.That(fooBarBaz.BazId, Is.EqualTo(_baz2Id));
-                fooBarBaz = results.First(x => x.FooBarBazId == _fooBarBaz2Id);
-                Assert.That(fooBarBaz.BazId, Is.EqualTo(_baz1Id));
                 fooBarBaz = results.First(x => x.FooBarBazId == _fooBarBaz2Id);
                 Assert.That(fooBarBaz.BazId, Is.EqualTo(_baz1Id));
             }
@@ -272,8 +272,8 @@ namespace ServiceStack.OrmLite.Tests.Expression
                 results.PrintDump();
 
                 Assert.That(results, Is.EquivalentTo(new Dictionary<int, string> {
-                    {1,"Banana"},
-                    {2,"Orange"},
+                    {_fooBar1Id,"Banana"},
+                    {_fooBar2Id,"Orange"},
                 }));
             }
         }

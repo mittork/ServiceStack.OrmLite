@@ -1,11 +1,15 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text;
 using NUnit.Framework;
 using ServiceStack.DataAnnotations;
 using ServiceStack.Model;
+using ServiceStack.OrmLite.Dapper;
 using ServiceStack.OrmLite.Tests.UseCase;
 using ServiceStack.Text;
+using System.Text.RegularExpressions;
 
 namespace ServiceStack.OrmLite.Tests
 {
@@ -14,10 +18,15 @@ namespace ServiceStack.OrmLite.Tests
     {
         private IDbConnection db;
 
-        [TestFixtureSetUp]
+        [OneTimeSetUp]
         public new void TestFixtureSetUp()
         {
             db = base.OpenDbConnection();
+            ResetTables();
+        }
+
+        private void ResetTables()
+        {
             CustomerOrdersUseCase.DropTables(db); //Has conflicting 'Order' table
 
             db.DropAndCreateTable<Order>();
@@ -35,8 +44,8 @@ namespace ServiceStack.OrmLite.Tests
             db.DeleteAll<Country>();
         }
 
-        [TestFixtureTearDown]
-        public void TestFixtureTearDown()
+        [OneTimeTearDown]
+        public new void TestFixtureTearDown()
         {
             db.Dispose();
         }
@@ -95,7 +104,7 @@ namespace ServiceStack.OrmLite.Tests
         {
             AddCustomerWithOrders();
 
-            var results = db.Select<FullCustomerInfo, Customer>(q => q
+            var results = db.Select<FullCustomerInfo>(db.From<Customer>()
                 .Join<Customer, CustomerAddress>()
                 .Join<Customer, Order>());
 
@@ -117,14 +126,14 @@ namespace ServiceStack.OrmLite.Tests
         {
             AddCustomerWithOrders();
 
-            var results = db.Select<FullCustomerInfo, Customer>(q => q
+            var results = db.Select<FullCustomerInfo>(db.From<Customer>()
                 .Join<Customer, CustomerAddress>()
                 .Join<Customer, Order>((c, o) => c.Id == o.CustomerId && o.Cost < 2));
 
             var costs = results.ConvertAll(x => x.Cost);
             Assert.That(costs, Is.EquivalentTo(new[] { 1.99m }));
 
-            var orders = db.Select<Order>(q => q
+            var orders = db.Select(db.From<Order>()
                 .Join<Order, Customer>()
                 .Join<Customer, CustomerAddress>()
                 .Where(o => o.Cost < 2)
@@ -133,7 +142,7 @@ namespace ServiceStack.OrmLite.Tests
             costs = orders.ConvertAll(x => x.Cost);
             Assert.That(costs, Is.EquivalentTo(new[] { 1.99m }));
 
-            results = db.Select<FullCustomerInfo, Customer>(q => q
+            results = db.Select<FullCustomerInfo>(db.From<Customer>()
                 .Join<Customer, CustomerAddress>()
                 .Join<Customer, Order>()
                 .Where<Order>(o => o.Cost < 2));
@@ -141,7 +150,7 @@ namespace ServiceStack.OrmLite.Tests
             costs = results.ConvertAll(x => x.Cost);
             Assert.That(costs, Is.EquivalentTo(new[] { 1.99m }));
 
-            results = db.Select<FullCustomerInfo, Customer>(q => q
+            results = db.Select<FullCustomerInfo>(db.From<Customer>()
                 .Join<Customer, CustomerAddress>()
                 .Join<Customer, Order>()
                 .Where<Order>(o => o.Cost < 2 || o.LineItem == "Line 2"));
@@ -168,7 +177,7 @@ namespace ServiceStack.OrmLite.Tests
                 new Country { CountryName = "Australia", CountryCode = "AU" },
                 new Country { CountryName = "USA", CountryCode = "US" });
 
-            var results = db.Select<FullCustomerInfo, Customer>(q => q
+            var results = db.Select<FullCustomerInfo>(db.From<Customer>()
                 .Join<CustomerAddress>() //implicit
                 .Join<Customer, Order>() //explicit
                 .Where(c => c.Name == "Customer 1")
@@ -192,7 +201,7 @@ namespace ServiceStack.OrmLite.Tests
             costs = results.ConvertAll(x => x.Cost);
             Assert.That(costs, Is.EquivalentTo(new[] { 1.99m, 1.49m, 9.99m }));
 
-            results = db.Select<FullCustomerInfo, Customer>(q => q
+            results = db.Select<FullCustomerInfo>(db.From<Customer>()
                 .Join<Customer, CustomerAddress>()
                 .Join<Customer, Order>()
                 .Where(c => c.Name == "Customer 2")
@@ -267,27 +276,27 @@ namespace ServiceStack.OrmLite.Tests
                 new Country { CountryName = "Spain", CountryCode = "ED" });
 
             //Normal Join
-            var dbCustomers = db.Select<Customer>(q => q
+            var dbCustomers = db.Select(db.From<Customer>()
                 .Join<CustomerAddress>()
                 .Join<CustomerAddress, Country>((ca, c) => ca.Country == c.CountryName));
 
             Assert.That(dbCustomers.Count, Is.EqualTo(2));
 
             //Left Join
-            dbCustomers = db.Select<Customer>(q => q
+            dbCustomers = db.Select(db.From<Customer>()
                 .Join<CustomerAddress>()
                 .LeftJoin<CustomerAddress, Country>((ca, c) => ca.Country == c.CountryName));
 
             Assert.That(dbCustomers.Count, Is.EqualTo(3));
 
             //Warning: Right and Full Joins are not implemented by Sqlite3. Avoid if possible.
-            var dbCountries = db.Select<Country>(q => q
+            var dbCountries = db.Select(db.From<Country>()
                 .LeftJoin<CustomerAddress>((c, ca) => ca.Country == c.CountryName)
                 .LeftJoin<CustomerAddress, Customer>());
 
             Assert.That(dbCountries.Count, Is.EqualTo(4));
 
-            var dbAddresses = db.Select<CustomerAddress>(q => q
+            var dbAddresses = db.Select(db.From<CustomerAddress>()
                 .LeftJoin<Country>((ca, c) => ca.Country == c.CountryName)
                 .LeftJoin<CustomerAddress, Customer>());
 
@@ -338,27 +347,27 @@ namespace ServiceStack.OrmLite.Tests
             AddAliasedCustomers(out countries);
 
             //Normal Join
-            var dbCustomers = db.Select<AliasedCustomer>(q => q
+            var dbCustomers = db.Select(db.From<AliasedCustomer>()
                 .Join<AliasedCustomerAddress>()
                 .Join<AliasedCustomerAddress, Country>((ca, c) => ca.Country == c.CountryName));
 
             Assert.That(dbCustomers.Count, Is.EqualTo(2));
 
             //Left Join
-            dbCustomers = db.Select<AliasedCustomer>(q => q
+            dbCustomers = db.Select(db.From<AliasedCustomer>()
                 .Join<AliasedCustomerAddress>()
                 .LeftJoin<AliasedCustomerAddress, Country>((ca, c) => ca.Country == c.CountryName));
 
             Assert.That(dbCustomers.Count, Is.EqualTo(3));
 
             //Warning: Right and Full Joins are not implemented by Sqlite3. Avoid if possible.
-            var dbCountries = db.Select<Country>(q => q
+            var dbCountries = db.Select(db.From<Country>()
                 .LeftJoin<AliasedCustomerAddress>((c, ca) => ca.Country == c.CountryName)
                 .LeftJoin<AliasedCustomerAddress, AliasedCustomer>());
 
             Assert.That(dbCountries.Count, Is.EqualTo(4));
 
-            var dbAddresses = db.Select<AliasedCustomerAddress>(q => q
+            var dbAddresses = db.Select(db.From<AliasedCustomerAddress>()
                 .LeftJoin<Country>((ca, c) => ca.Country == c.CountryName)
                 .LeftJoin<AliasedCustomerAddress, AliasedCustomer>());
 
@@ -427,7 +436,7 @@ namespace ServiceStack.OrmLite.Tests
 
             var customer = AddCustomerWithOrders();
 
-            var results = db.Select<FullCustomerInfo, Customer>(q => q
+            var results = db.Select<FullCustomerInfo>(db.From<Customer>()
                 .Join<Customer, CustomerAddress>()
                 .Join<Customer, Order>());
 
@@ -472,7 +481,7 @@ namespace ServiceStack.OrmLite.Tests
             var customers = AddAliasedCustomers(out countries);
 
             //Normal Join
-            var results = db.Select<MixedCustomerInfo, AliasedCustomer>(q => q
+            var results = db.Select<MixedCustomerInfo>(db.From<AliasedCustomer>()
                 .Join<AliasedCustomerAddress>()
                 .Join<AliasedCustomerAddress, Country>((ca, c) => ca.Country == c.CountryName));
 
@@ -515,9 +524,11 @@ namespace ServiceStack.OrmLite.Tests
 
             db.Save(customer, references: true);
 
+#pragma warning disable 472
             var q = db.From<Customer>();
             q.LeftJoin<Order>()
              .Where<Order>(o => o.Id == null);
+#pragma warning restore 472
 
             var customers = db.Select(q);
 
@@ -556,10 +567,11 @@ namespace ServiceStack.OrmLite.Tests
         {
             AddCustomersWithOrders();
 
-            var customers = db.Select<Customer>(q =>
-                q.Join<Order>()
-                 .Where<Order>(o => o.Qty == 1)
-                 .SelectDistinct());
+            var customers = db.Select(db.From<Customer>()
+                .Join<Order>()
+                .Where<Order>(o => o.Qty == 1)
+                .OrderBy(x => x.Id)
+                .SelectDistinct());
 
             var orders = db.Select<Order>(o => o.Qty == 1);
 
@@ -588,7 +600,7 @@ namespace ServiceStack.OrmLite.Tests
             var id1 = db.Insert(new TABLE_1 { One = "A" }, selectIdentity: true);
             var id2 = db.Insert(new TABLE_1 { One = "B" }, selectIdentity: true);
 
-            db.Insert(new TABLE_2 { Three = "C", TableOneKey = (int) id1 });
+            db.Insert(new TABLE_2 { Three = "C", TableOneKey = (int)id1 });
 
             var q = db.From<TABLE_1>()
                       .Join<TABLE_2>();
@@ -597,15 +609,16 @@ namespace ServiceStack.OrmLite.Tests
             Assert.That(results.Count, Is.EqualTo(1));
             Assert.That(results[0].One, Is.EqualTo("A"));
 
-            var row3 = new TABLE_3 {
+            var row3 = new TABLE_3
+            {
                 Three = "3a",
-                TableTwo = new TABLE_2 
+                TableTwo = new TABLE_2
                 {
                     Three = "3b",
                     TableOneKey = (int)id1,
                 }
             };
-            db.Save(row3, references:true);
+            db.Save(row3, references: true);
 
             Assert.That(row3.TableTwoKey, Is.EqualTo(row3.TableTwo.Id));
 
@@ -618,7 +631,7 @@ namespace ServiceStack.OrmLite.Tests
         {
             AddCustomersWithOrders();
 
-            var customers = db.LoadSelect<Customer>(q => q.OrderBy(x => x.Name));
+            var customers = db.LoadSelect(db.From<Customer>().OrderBy(x => x.Name));
             var addresses = customers.Select(x => x.PrimaryAddress).ToList();
             var orders = customers.SelectMany(x => x.Orders).ToList();
 
@@ -670,14 +683,17 @@ namespace ServiceStack.OrmLite.Tests
         [Test]
         public void Can_load_select_with_join_and_same_name_columns()
         {
+            //Doesn't have Schema dbo.
+            if (Dialect == Dialect.PostgreSql) return;
+
             // Drop tables in order that FK allows
             db.DropTable<ProjectTask>();
             db.DropTable<Project>();
             db.CreateTable<Project>();
             db.CreateTable<ProjectTask>();
 
-            db.Insert(new Project {Val = "test"});
-            db.Insert(new ProjectTask {Val = "testTask", ProjectId = 1});
+            db.Insert(new Project { Val = "test" });
+            db.Insert(new ProjectTask { Val = "testTask", ProjectId = 1 });
 
             var query = db.From<ProjectTask>()
                 .Join<ProjectTask, Project>((pt, p) => pt.ProjectId == p.Id);
@@ -726,6 +742,149 @@ namespace ServiceStack.OrmLite.Tests
             Assert.That(results[0].Child, Is.Not.Null);
             Assert.That(results[0].Child.Value, Is.EqualTo("Lolz"));
             results.PrintDump();
+        }
+
+        [Test]
+        public void Can_populate_multiple_POCOs_using_Dappers_QueryMultiple()
+        {
+            if (Dialect == Dialect.PostgreSql) return; //Dapper doesn't know about pgsql naming conventions
+
+            ResetTables();
+            AddCustomerWithOrders();
+
+            var q = db.From<Customer>()
+                .Join<Customer, CustomerAddress>()
+                .Join<Customer, Order>()
+                .OrderBy<Order>(x => x.Id)
+                .Select("*");
+
+            using (var multi = db.QueryMultiple(q.ToSelectStatement()))
+            {
+                var tuples = multi.Read<Customer, CustomerAddress, Order, Tuple<Customer, CustomerAddress, Order>>(
+                    Tuple.Create).ToList();
+
+                var sb = new StringBuilder();
+                foreach (var tuple in tuples)
+                {
+                    sb.AppendLine("Customer:");
+                    sb.AppendLine(tuple.Item1.Dump());
+                    sb.AppendLine("Customer Address:");
+                    sb.AppendLine(tuple.Item2.Dump());
+                    sb.AppendLine("Order:");
+                    sb.AppendLine(tuple.Item3.Dump());
+                }
+
+                AssertMultiCustomerOrderResults(sb);
+            }
+        }
+
+        [Test]
+        public void Can_populate_multiple_POCOs_using_SelectMulti2()
+        {
+            ResetTables();
+            AddCustomerWithOrders();
+
+            var q = db.From<Customer>()
+                .Join<Customer, CustomerAddress>();
+
+            var tuples = db.SelectMulti<Customer, CustomerAddress>(q);
+
+            var sb = new StringBuilder();
+            foreach (var tuple in tuples)
+            {
+                sb.AppendLine("Customer:");
+                sb.AppendLine(tuple.Item1.Dump());
+                sb.AppendLine("Customer Address:");
+                sb.AppendLine(tuple.Item2.Dump());
+            }
+
+            Assert.That(sb.ToString().NormalizeNewLines().Trim(), Is.EqualTo(
+@"Customer:
+{
+	Id: 1,
+	Name: Customer 1
+}
+Customer Address:
+{
+	Id: 1,
+	CustomerId: 1,
+	AddressLine1: 1 Australia Street,
+	Country: Australia
+}".NormalizeNewLines()));
+        }
+
+        [Test]
+        public void Can_populate_multiple_POCOs_using_SelectMulti3()
+        {
+            ResetTables();
+            AddCustomerWithOrders();
+
+            var q = db.From<Customer>()
+                .Join<Customer, CustomerAddress>()
+                .Join<Customer, Order>()
+                .Where(x => x.Id == 1)
+                .And<CustomerAddress>(x => x.Country == "Australia")
+                .OrderBy<Order>(x => x.Id);
+
+            var tuples = db.SelectMulti<Customer, CustomerAddress, Order>(q);
+
+            var sb = new StringBuilder();
+            foreach (var tuple in tuples)
+            {
+                sb.AppendLine("Customer:");
+                sb.AppendLine(tuple.Item1.Dump());
+                sb.AppendLine("Customer Address:");
+                sb.AppendLine(tuple.Item2.Dump());
+                sb.AppendLine("Order:");
+                sb.AppendLine(tuple.Item3.Dump());
+            }
+            sb.ToString().Print();
+            AssertMultiCustomerOrderResults(sb);
+        }
+
+        private static void AssertMultiCustomerOrderResults(StringBuilder sb)
+        {
+            Assert.That(Regex.Replace(sb.ToString(), @"\.99[0]+",".99").NormalizeNewLines().Trim(), Is.EqualTo(
+                @"Customer:
+{
+	Id: 1,
+	Name: Customer 1
+}
+Customer Address:
+{
+	Id: 1,
+	CustomerId: 1,
+	AddressLine1: 1 Australia Street,
+	Country: Australia
+}
+Order:
+{
+	Id: 1,
+	CustomerId: 1,
+	LineItem: Line 1,
+	Qty: 1,
+	Cost: 1.99
+}
+Customer:
+{
+	Id: 1,
+	Name: Customer 1
+}
+Customer Address:
+{
+	Id: 1,
+	CustomerId: 1,
+	AddressLine1: 1 Australia Street,
+	Country: Australia
+}
+Order:
+{
+	Id: 2,
+	CustomerId: 1,
+	LineItem: Line 2,
+	Qty: 2,
+	Cost: 2.99
+}".NormalizeNewLines()));
         }
     }
 
@@ -800,7 +959,7 @@ namespace ServiceStack.OrmLite.Tests
         [AutoIncrement]
         public int Id { get; set; }
 
-        [References(typeof (Project))]
+        [References(typeof(Project))]
         public int ProjectId { get; set; }
 
         [Reference]

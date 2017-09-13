@@ -2,113 +2,201 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Npgsql;
 using NpgsqlTypes;
+using ServiceStack.OrmLite.Converters;
+using ServiceStack.OrmLite.PostgreSQL.Converters;
+using ServiceStack.OrmLite.Support;
 using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite.PostgreSQL
 {
-    public class PostgreSQLDialectProvider : OrmLiteDialectProviderBase<PostgreSQLDialectProvider>
+    public class PostgreSqlDialectProvider : OrmLiteDialectProviderBase<PostgreSqlDialectProvider>
     {
-        public static PostgreSQLDialectProvider Instance = new PostgreSQLDialectProvider();
-        const string textColumnDefinition = "text";
+        public static PostgreSqlDialectProvider Instance = new PostgreSqlDialectProvider();
 
         public bool UseReturningForLastInsertId { get; set; }
 
-        public PostgreSQLDialectProvider()
+        public PostgreSqlDialectProvider()
         {
             base.AutoIncrementDefinition = "";
-            base.IntColumnDefinition = "integer";
-            base.BoolColumnDefinition = "boolean";
-            base.TimeColumnDefinition = "time";
-            base.DateTimeColumnDefinition = "timestamp";
-            base.DateTimeOffsetColumnDefinition = "timestamp";
-            base.DecimalColumnDefinition = "numeric(38,6)";
-            base.GuidColumnDefinition = "uuid";
             base.ParamString = ":";
-            base.BlobColumnDefinition = "bytea";
-            base.RealColumnDefinition = "double precision";
-            base.StringLengthColumnDefinitionFormat = textColumnDefinition;
-            //there is no "n"varchar in postgres. All strings are either unicode or non-unicode, inherited from the database.
-            base.StringLengthUnicodeColumnDefinitionFormat = "character varying({0})";
-            base.StringLengthNonUnicodeColumnDefinitionFormat = "character varying({0})";
-            base.MaxStringColumnDefinition = "TEXT";
-            base.InitColumnTypeMap();
             base.SelectIdentitySql = "SELECT LASTVAL()";
             this.UseReturningForLastInsertId = true;
             this.NamingStrategy = new PostgreSqlNamingStrategy();
             this.StringSerializer = new JsonStringSerializer();
+
+            base.InitColumnTypeMap();
+
+            RegisterConverter<string>(new PostgreSqlStringConverter());
+            RegisterConverter<char[]>(new PostgreSqlCharArrayConverter());
+
+            RegisterConverter<bool>(new PostgreSqlBoolConverter());
+            RegisterConverter<Guid>(new PostgreSqlGuidConverter());
+
+            RegisterConverter<DateTime>(new PostgreSqlDateTimeConverter());
+            RegisterConverter<DateTimeOffset>(new PostgreSqlDateTimeOffsetConverter());
+
+
+            RegisterConverter<sbyte>(new PostrgreSqlSByteConverter());
+            RegisterConverter<ushort>(new PostrgreSqlUInt16Converter());
+            RegisterConverter<uint>(new PostrgreSqlUInt32Converter());
+            RegisterConverter<ulong>(new PostrgreSqlUInt64Converter());
+
+            RegisterConverter<float>(new PostrgreSqlFloatConverter());
+            RegisterConverter<double>(new PostrgreSqlDoubleConverter());
+            RegisterConverter<decimal>(new PostrgreSqlDecimalConverter());
+
+            RegisterConverter<byte[]>(new PostrgreSqlByteArrayConverter());
+
+            //TODO provide support for pgsql native datastructures:
+            RegisterConverter<string[]>(new PostgreSqlStringArrayConverter());
+            RegisterConverter<int[]>(new PostgreSqlIntArrayConverter());
+            RegisterConverter<long[]>(new PostgreSqlLongArrayConverter());
+
+            this.Variables = new Dictionary<string, string>
+            {
+                { OrmLiteVariables.SystemUtc, "now() at time zone 'utc'" },
+            };
         }
 
-        public override void OnAfterInitColumnTypeMap()
+        private bool normalize;
+        public bool Normalize
         {
-            DbTypeMap.Set<TimeSpan>(DbType.Time, "interval");
-            DbTypeMap.Set<TimeSpan?>(DbType.Time, "interval");
-            DbTypeMap.Set<DateTimeOffset>(DbType.DateTimeOffset, DateTimeOffsetColumnDefinition);
-            DbTypeMap.Set<DateTimeOffset?>(DbType.DateTimeOffset, DateTimeOffsetColumnDefinition);
-
-            //throws unknown type exceptions in parameterized queries, e.g: p.DbType = DbType.SByte
-            DbTypeMap.Set<sbyte>(DbType.Byte, IntColumnDefinition);
-            DbTypeMap.Set<ushort>(DbType.Int16, IntColumnDefinition);
-            DbTypeMap.Set<uint>(DbType.Int32, IntColumnDefinition);
-            DbTypeMap.Set<ulong>(DbType.Int64, LongColumnDefinition);
-
-            base.OnAfterInitColumnTypeMap();
+            get => normalize;
+            set
+            {
+                normalize = value;
+                NamingStrategy = normalize
+                    ? new OrmLiteNamingStrategyBase()
+                    : new PostgreSqlNamingStrategy();
+            }            
         }
 
-        public override string GetColumnDefinition(
-            string fieldName,
-            Type fieldType,
-            bool isPrimaryKey,
-            bool autoIncrement,
-            bool isNullable, 
-            bool isRowVersion,
-            int? fieldLength,
-            int? scale,
-            string defaultValue,
-            string customFieldDefinition)
+        //https://www.postgresql.org/docs/7.3/static/sql-keywords-appendix.html
+        public static HashSet<string> ReservedWords = new HashSet<string>(new[]
         {
-            if (isRowVersion)
+            "ALL",
+            "ANALYSE",
+            "ANALYZE",
+            "AND",
+            "ANY",
+            "AS",
+            "ASC",
+            "AUTHORIZATION",
+            "BETWEEN",
+            "BINARY",
+            "BOTH",
+            "CASE",
+            "CAST",
+            "CHECK",
+            "COLLATE",
+            "COLUMN",
+            "CONSTRAINT",
+            "CURRENT_DATE",
+            "CURRENT_TIME",
+            "CURRENT_TIMESTAMP",
+            "CURRENT_USER",
+            "DEFAULT",
+            "DEFERRABLE",
+            "DISTINCT",
+            "DO",
+            "ELSE",
+            "END",
+            "EXCEPT",
+            "FOR",
+            "FOREIGN",
+            "FREEZE",
+            "FROM",
+            "FULL",
+            "HAVING",
+            "ILIKE",
+            "IN",
+            "INITIALLY",
+            "INNER",
+            "INTERSECT",
+            "INTO",
+            "IS",
+            "ISNULL",
+            "JOIN",
+            "LEADING",
+            "LEFT",
+            "LIKE",
+            "LIMIT",
+            "LOCALTIME",
+            "LOCALTIMESTAMP",
+            "NEW",
+            "NOT",
+            "NOTNULL",
+            "NULL",
+            "OFF",
+            "OFFSET",
+            "OLD",
+            "ON",
+            "ONLY",
+            "OR",
+            "ORDER",
+            "OUTER",
+            "OVERLAPS",
+            "PLACING",
+            "PRIMARY",
+            "REFERENCES",
+            "RIGHT",
+            "SELECT",
+            "SESSION_USER",
+            "SIMILAR",
+            "SOME",
+            "TABLE",
+            "THEN",
+            "TO",
+            "TRAILING",
+            "TRUE",
+            "UNION",
+            "UNIQUE",
+            "USER",
+            "USING",
+            "VERBOSE",
+            "WHEN",
+            "WHERE",
+        }, StringComparer.OrdinalIgnoreCase);
+
+        public override string GetColumnDefinition(FieldDefinition fieldDef)
+        {
+            if (fieldDef.IsRowVersion)
                 return null;
 
             string fieldDefinition = null;
-            if (customFieldDefinition != null)
+            if (fieldDef.CustomFieldDefinition != null)
             {
-                fieldDefinition = customFieldDefinition;
-            }
-            else if (fieldType == typeof(string))
-            {
-                fieldDefinition = fieldLength == int.MaxValue
-                    ? MaxStringColumnDefinition
-                    : fieldLength != null ?
-                        string.Format(StringLengthColumnDefinitionFormat, fieldLength) :
-                        textColumnDefinition;
+                fieldDefinition = fieldDef.CustomFieldDefinition;
             }
             else
             {
-                if (autoIncrement)
+                if (fieldDef.AutoIncrement)
                 {
-                    if (fieldType == typeof(long))
+                    if (fieldDef.ColumnType == typeof(long))
                         fieldDefinition = "bigserial";
-                    else if (fieldType == typeof(int))
+                    else if (fieldDef.ColumnType == typeof(int))
                         fieldDefinition = "serial";
                 }
                 else
                 {
-                    fieldDefinition = GetColumnTypeDefinition(fieldType);
+                    fieldDefinition = GetColumnTypeDefinition(fieldDef.ColumnType, fieldDef.FieldLength, fieldDef.Scale);
                 }
             }
 
-            var sql = new StringBuilder();
-            sql.AppendFormat("{0} {1}", GetQuotedColumnName(fieldName), fieldDefinition);
+            var sql = StringBuilderCache.Allocate();
+            sql.AppendFormat("{0} {1}", GetQuotedColumnName(fieldDef.FieldName), fieldDefinition);
 
-            if (isPrimaryKey)
+            if (fieldDef.IsPrimaryKey)
             {
                 sql.Append(" PRIMARY KEY");
             }
             else
             {
-                if (isNullable)
+                if (fieldDef.IsNullable)
                 {
                     sql.Append(" NULL");
                 }
@@ -118,25 +206,22 @@ namespace ServiceStack.OrmLite.PostgreSQL
                 }
             }
 
+            var defaultValue = GetDefaultValue(fieldDef);
             if (!string.IsNullOrEmpty(defaultValue))
             {
                 sql.AppendFormat(DefaultValueFormat, defaultValue);
             }
 
-            var definition = sql.ToString();
-
-            if (fieldType == typeof(Decimal))
-                return base.ReplaceDecimalColumnDefinition(definition, fieldLength, scale);
-
+            var definition = StringBuilderCache.ReturnAndFree(sql);
             return definition;
         }
 
         //Convert xmin into an integer so it can be used in comparisons
         public const string RowVersionFieldComparer = "int8in(xidout(xmin))";
 
-        public override string GetRowVersionColumnName(FieldDefinition field)
+        public override SelectItem GetRowVersionColumnName(FieldDefinition field, string tablePrefix = null)
         {
-            return "xmin as " + GetQuotedColumnName(field.FieldName);
+            return new SelectItemColumn(this, "xmin", field.FieldName, tablePrefix);
         }
 
         public override void AppendFieldCondition(StringBuilder sqlFilter, FieldDefinition fieldDef, IDbCommand cmd)
@@ -163,68 +248,21 @@ namespace ServiceStack.OrmLite.PostgreSQL
             return new NpgsqlConnection(connectionString);
         }
 
-        public override string GetQuotedValue(object value, Type fieldType)
-        {
-            if (value == null) return "NULL";
-
-            if (fieldType == typeof(DateTime))
-            {
-                var dateValue = (DateTime)value;
-                const string iso8601Format = "yyyy-MM-dd HH:mm:ss.fff";
-                return base.GetQuotedValue(dateValue.ToString(iso8601Format), typeof(string));
-            }
-            if (fieldType == typeof(DateTimeOffset))
-            {
-                var dateValue = (DateTimeOffset)value;
-                const string iso8601Format = "yyyy-MM-dd HH:mm:ss.fff zzz";
-                return base.GetQuotedValue(dateValue.ToString(iso8601Format), typeof(string));
-            }
-            if (fieldType == typeof(Guid))
-            {
-                var guidValue = (Guid)value;
-                return base.GetQuotedValue(guidValue.ToString("N"), typeof(string));
-            }
-            if (fieldType == typeof(byte[]))
-            {
-                return "E'" + ToBinary(value) + "'";
-            }
-            if (fieldType.IsArray && typeof(string).IsAssignableFrom(fieldType.GetElementType()))
-            {
-                var stringArray = (string[])value;
-                return ToArray(stringArray);
-            }
-            if (fieldType.IsArray && typeof(int).IsAssignableFrom(fieldType.GetElementType()))
-            {
-                var integerArray = (int[])value;
-                return ToArray(integerArray);
-            }
-            if (fieldType.IsArray && typeof(long).IsAssignableFrom(fieldType.GetElementType()))
-            {
-                var longArray = (long[])value;
-                return ToArray(longArray);
-            }
-
-            return base.GetQuotedValue(value, fieldType);
-        }
-
-        public override object ConvertDbValue(object value, Type type)
-        {
-            if (value == null || value is DBNull) return null;
-
-            if (type == typeof(byte[])) { return value; }
-
-            return base.ConvertDbValue(value, type);
-        }
-
         public override SqlExpression<T> SqlExpression<T>()
         {
             return new PostgreSqlExpression<T>(this);
         }
 
+        public override IDbDataParameter CreateParam()
+        {
+            return new NpgsqlParameter();
+        }
+
         public override bool DoesTableExist(IDbCommand dbCmd, string tableName, string schema = null)
         {
-            var sql = "SELECT COUNT(*) FROM pg_class WHERE relname = {0}"
-                .SqlFmt(tableName);
+            var sql = !Normalize || ReservedWords.Contains(tableName)
+                ? "SELECT COUNT(*) FROM pg_class WHERE relname = {0}".SqlFmt(tableName)
+                : "SELECT COUNT(*) FROM pg_class WHERE lower(relname) = {0}".SqlFmt(tableName.ToLower());
 
             var conn = dbCmd.Connection;
             if (conn != null)
@@ -235,19 +273,46 @@ namespace ServiceStack.OrmLite.PostgreSQL
                 
                 // If a search path (schema) is specified, and there is only one, then assume the CREATE TABLE directive should apply to that schema.
                 if (!string.IsNullOrEmpty(schema) && !schema.Contains(","))
-                    sql = "SELECT COUNT(*) FROM pg_class JOIN pg_catalog.pg_namespace n ON n.oid = pg_class.relnamespace WHERE relname = {0} AND nspname = {1}"
-                          .SqlFmt(tableName, schema);
+                {
+                    sql = !Normalize || ReservedWords.Contains(schema)
+                        ? "SELECT COUNT(*) FROM pg_class JOIN pg_catalog.pg_namespace n ON n.oid = pg_class.relnamespace WHERE relname = {0} AND nspname = {1}".SqlFmt(tableName, schema)
+                        : "SELECT COUNT(*) FROM pg_class JOIN pg_catalog.pg_namespace n ON n.oid = pg_class.relnamespace WHERE lower(relname) = {0} AND lower(nspname) = {1}".SqlFmt(tableName.ToLower(), schema.ToLower());
+                }
             }
 
-            dbCmd.CommandText = sql;
-            var result = dbCmd.LongScalar();
+            var result = dbCmd.ExecLongScalar(sql);
+
+            return result > 0;
+        }
+
+        public override bool DoesColumnExist(IDbConnection db, string columnName, string tableName, string schema = null)
+        {
+            var sql = !Normalize || ReservedWords.Contains(tableName)
+                ? "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @tableName".SqlFmt(tableName)
+                : "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE lower(TABLE_NAME) = @tableName".SqlFmt(tableName.ToLower());
+
+            sql += !Normalize || ReservedWords.Contains(columnName)
+                ? " AND COLUMN_NAME = @columnName".SqlFmt(columnName)
+                : " AND lower(COLUMN_NAME) = @columnName".SqlFmt(columnName.ToLower());
+
+            if (schema != null)
+            {
+                sql += !Normalize || ReservedWords.Contains(schema)
+                    ? " AND TABLE_SCHEMA = @schema"
+                    : " AND lower(TABLE_SCHEMA) = @schema";
+
+                if (Normalize)
+                    schema = schema.ToLower();
+            }
+
+            var result = db.SqlScalar<long>(sql, new { tableName, columnName, schema });
 
             return result > 0;
         }
 
         public override string ToExecuteProcedureStatement(object objWithProperties)
         {
-            var sbColumnValues = new StringBuilder();
+            var sbColumnValues = StringBuilderCache.Allocate();
 
             var tableType = objWithProperties.GetType();
             var modelDef = GetModel(tableType);
@@ -255,69 +320,47 @@ namespace ServiceStack.OrmLite.PostgreSQL
             foreach (var fieldDef in modelDef.FieldDefinitions)
             {
                 if (sbColumnValues.Length > 0) sbColumnValues.Append(",");
-                try
-                {
-                    sbColumnValues.Append(fieldDef.GetQuotedValue(objWithProperties));
-                }
-                catch (Exception)
-                {
-                    throw;
-                }
+                sbColumnValues.Append(fieldDef.GetQuotedValue(objWithProperties));
             }
 
+            var colValues = StringBuilderCache.ReturnAndFree(sbColumnValues);
             var sql = string.Format("{0} {1}{2}{3};",
                 GetQuotedTableName(modelDef),
-                sbColumnValues.Length > 0 ? "(" : "",
-                sbColumnValues,
-                sbColumnValues.Length > 0 ? ")" : "");
+                colValues.Length > 0 ? "(" : "",
+                colValues,
+                colValues.Length > 0 ? ")" : "");
 
             return sql;
+        }
+
+        public override string GetQuotedTableName(string tableName, string schema = null)
+        {
+            return !Normalize || ReservedWords.Contains(tableName) || (schema != null && ReservedWords.Contains(schema))
+                ? base.GetQuotedTableName(tableName, schema)
+                : schema != null
+                    ? schema + "." + tableName
+                    : tableName;
+        }
+
+        public override string GetQuotedName(string name)
+        {
+            return !Normalize || ReservedWords.Contains(name)
+                ? base.GetQuotedName(name)
+                : name;
         }
 
         public override string GetQuotedTableName(ModelDefinition modelDef)
         {
             if (!modelDef.IsInSchema)
-            {
                 return base.GetQuotedTableName(modelDef);
-            }
+            if (Normalize && !ReservedWords.Contains(modelDef.ModelName) && !ReservedWords.Contains(modelDef.Schema))
+                return modelDef.Schema + "." + base.NamingStrategy.GetTableName(modelDef.ModelName);
+
             string escapedSchema = modelDef.Schema.Replace(".", "\".\"");
-            return string.Format("\"{0}\".\"{1}\"", escapedSchema, base.NamingStrategy.GetTableName(modelDef.ModelName));
+            return $"\"{escapedSchema}\".\"{base.NamingStrategy.GetTableName(modelDef.ModelName)}\"";
         }
-
-        /// <summary>
-        /// based on Npgsql2's source: Npgsql2\src\NpgsqlTypes\NpgsqlTypeConverters.cs
-        /// </summary>
-        /// <param name="TypeInfo"></param>
-        /// <param name="NativeData"></param>
-        /// <param name="ForExtendedQuery"></param>
-        /// <returns></returns>
-        internal static String ToBinary(Object NativeData)
-        {
-            var byteArray = (Byte[])NativeData;
-            var res = new StringBuilder(byteArray.Length * 5);
-            foreach (byte b in byteArray)
-                if (b >= 0x20 && b < 0x7F && b != 0x27 && b != 0x5C)
-                    res.Append((char)b);
-                else
-                    res.Append("\\\\")
-                        .Append((char)('0' + (7 & (b >> 6))))
-                        .Append((char)('0' + (7 & (b >> 3))))
-                        .Append((char)('0' + (7 & b)));
-            return res.ToString();
-        }
-
-        internal string ToArray<T>(T[] source)
-        {
-            var values = new StringBuilder();
-            foreach (var value in source)
-            {
-                if (values.Length > 0) values.Append(",");
-                values.Append(base.GetQuotedValue(value, typeof(T)));
-            }
-            return "ARRAY[" + values + "]";
-        }
-
-        public override long InsertAndGetLastInsertId<T>(IDbCommand dbCmd)
+        
+        public override string GetLastInsertIdSqlSuffix<T>()
         {
             if (SelectIdentitySql == null)
                 throw new NotImplementedException("Returning last inserted identity is not implemented on this DB Provider.");
@@ -326,14 +369,12 @@ namespace ServiceStack.OrmLite.PostgreSQL
             {
                 var modelDef = GetModel(typeof(T));
                 var pkName = NamingStrategy.GetColumnName(modelDef.PrimaryKey.FieldName);
-                dbCmd.CommandText += " RETURNING " + pkName;                
-            }
-            else
-            {
-                dbCmd.CommandText += "; " + SelectIdentitySql;
+                return !Normalize
+                    ? $" RETURNING \"{pkName}\""
+                    : " RETURNING " + pkName;
             }
 
-            return dbCmd.ExecLongScalar();
+            return "; " + SelectIdentitySql;
         }
 
         public override void SetParameter(FieldDefinition fieldDef, IDbDataParameter p)
@@ -376,19 +417,15 @@ namespace ServiceStack.OrmLite.PostgreSQL
             }
             base.SetParameter(fieldDef, p);
         }
+
         protected override object GetValue<T>(FieldDefinition fieldDef, object obj)
         {
-            if (fieldDef.CustomFieldDefinition == "text[]")
+            switch (fieldDef.CustomFieldDefinition)
             {
-                return fieldDef.GetValue(obj);
-            }
-            if (fieldDef.CustomFieldDefinition == "integer[]")
-            {
-                return fieldDef.GetValue(obj);
-            }
-            if (fieldDef.CustomFieldDefinition == "bigint[]")
-            {
-                return fieldDef.GetValue(obj);
+                case "text[]":
+                case "integer[]":
+                case "bigint[]":
+                    return fieldDef.GetValue(obj);
             }
             return base.GetValue<T>(fieldDef, obj);
         }
@@ -410,5 +447,102 @@ namespace ServiceStack.OrmLite.PostgreSQL
 
             SetParameterValues<T>(cmd, obj);
         }
+
+        public override string SqlConcat(IEnumerable<object> args) => string.Join(" || ", args);
+
+        public override string SqlCurrency(string fieldOrValue, string currencySymbol) => currencySymbol == "$"
+            ? fieldOrValue + "::text::money::text"
+            : "replace(" + fieldOrValue + "::text::money::text,'$','" + currencySymbol + "')";
+
+        protected NpgsqlConnection Unwrap(IDbConnection db)
+        {
+            return (NpgsqlConnection)db.ToDbConnection();
+        }
+
+        protected NpgsqlCommand Unwrap(IDbCommand cmd)
+        {
+            return (NpgsqlCommand)cmd.ToDbCommand();
+        }
+
+        protected NpgsqlDataReader Unwrap(IDataReader reader)
+        {
+            return (NpgsqlDataReader)reader;
+        }
+
+#if ASYNC
+        public override Task OpenAsync(IDbConnection db, CancellationToken token = default(CancellationToken))
+        {
+            return Unwrap(db).OpenAsync(token);
+        }
+
+        public override Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        {
+            return Unwrap(cmd).ExecuteReaderAsync(token).Then(x => (IDataReader)x);
+        }
+
+        public override Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        {
+            return Unwrap(cmd).ExecuteNonQueryAsync(token);
+        }
+
+        public override Task<object> ExecuteScalarAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        {
+            return Unwrap(cmd).ExecuteScalarAsync(token);
+        }
+
+        public override Task<bool> ReadAsync(IDataReader reader, CancellationToken token = default(CancellationToken))
+        {
+            return Unwrap(reader).ReadAsync(token);
+        }
+
+        public override async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
+        {
+            try
+            {
+                var to = new List<T>();
+                while (await ReadAsync(reader, token).ConfigureAwait(false))
+                {
+                    var row = fn();
+                    to.Add(row);
+                }
+                return to;
+            }
+            finally
+            {
+                reader.Dispose();
+            }
+        }
+
+        public override async Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token = default(CancellationToken))
+        {
+            try
+            {
+                while (await ReadAsync(reader, token).ConfigureAwait(false))
+                {
+                    fn();
+                }
+                return source;
+            }
+            finally
+            {
+                reader.Dispose();
+            }
+        }
+
+        public override async Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
+        {
+            try
+            {
+                if (await ReadAsync(reader, token).ConfigureAwait(false))
+                    return fn();
+
+                return default(T);
+            }
+            finally
+            {
+                reader.Dispose();
+            }
+        }
+#endif
     }
 }

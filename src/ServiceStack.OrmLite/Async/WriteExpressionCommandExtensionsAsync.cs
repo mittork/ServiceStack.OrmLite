@@ -1,4 +1,4 @@
-#if NET45
+#if ASYNC
 using System;
 using System.Data;
 using System.Linq.Expressions;
@@ -9,112 +9,123 @@ namespace ServiceStack.OrmLite
 {
     internal static class WriteExpressionCommandExtensionsAsync
     {
-        internal static Task<int> UpdateOnlyAsync<T>(this IDbCommand dbCmd, T model, Func<SqlExpression<T>, SqlExpression<T>> onlyFields, CancellationToken token)
+        internal static Task<int> UpdateOnlyAsync<T>(this IDbCommand dbCmd, T model, SqlExpression<T> onlyFields, Action<IDbCommand> commandFilter, CancellationToken token)
         {
-            return dbCmd.UpdateOnlyAsync(model, onlyFields(dbCmd.GetDialectProvider().SqlExpression<T>()), token);
+            dbCmd.UpdateOnlySql(model, onlyFields);
+            commandFilter?.Invoke(dbCmd);
+            return dbCmd.ExecNonQueryAsync(token);
         }
 
-        internal static Task<int> UpdateOnlyAsync<T>(this IDbCommand dbCmd, T model, SqlExpression<T> onlyFields, CancellationToken token)
-        {
-            var sql = dbCmd.UpdateOnlySql(model, onlyFields);
-            return dbCmd.ExecuteSqlAsync(sql, token);
-        }
-
-        internal static Task<int> UpdateOnlyAsync<T, TKey>(this IDbCommand dbCmd, T obj,
-            Expression<Func<T, TKey>> onlyFields,
-            Expression<Func<T, bool>> where, 
+        internal static Task<int> UpdateOnlyAsync<T>(this IDbCommand dbCmd, T obj,
+            Expression<Func<T, object>> onlyFields,
+            Expression<Func<T, bool>> where,
+            Action<IDbCommand> commandFilter,
             CancellationToken token)
         {
             if (onlyFields == null)
-                throw new ArgumentNullException("onlyFields");
+                throw new ArgumentNullException(nameof(onlyFields));
 
             var q = dbCmd.GetDialectProvider().SqlExpression<T>();
             q.Update(onlyFields);
             q.Where(where);
-            return dbCmd.UpdateOnlyAsync(obj, q, token);
+            return dbCmd.UpdateOnlyAsync(obj, q, commandFilter, token);
+        }
+
+        internal static Task<int> UpdateOnlyAsync<T>(this IDbCommand dbCmd, T obj,
+            string[] onlyFields,
+            Expression<Func<T, bool>> where,
+            Action<IDbCommand> commandFilter,
+            CancellationToken token)
+        {
+            if (onlyFields == null)
+                throw new ArgumentNullException(nameof(onlyFields));
+
+            var q = dbCmd.GetDialectProvider().SqlExpression<T>();
+            q.Update(onlyFields);
+            q.Where(where);
+            return dbCmd.UpdateOnlyAsync(obj, q, commandFilter, token);
+        }
+
+        internal static Task<int> UpdateOnlyAsync<T>(this IDbCommand dbCmd,
+            Expression<Func<T>> updateFields,
+            SqlExpression<T> q,
+            Action<IDbCommand> commandFilter,
+            CancellationToken token)
+        {
+            var cmd = dbCmd.InitUpdateOnly(updateFields, q);
+            commandFilter?.Invoke(cmd);
+            return cmd.ExecNonQueryAsync(token);
+        }
+
+        public static Task<int> UpdateAddAsync<T>(this IDbCommand dbCmd,
+            Expression<Func<T>> updateFields,
+            SqlExpression<T> q,
+            Action<IDbCommand> commandFilter,
+            CancellationToken token)
+        {
+            var cmd = dbCmd.InitUpdateAdd(updateFields, q);
+            commandFilter?.Invoke(cmd);
+            return cmd.ExecNonQueryAsync(token);
         }
 
         internal static Task<int> UpdateNonDefaultsAsync<T>(this IDbCommand dbCmd, T item, Expression<Func<T, bool>> obj, CancellationToken token)
         {
-            if (OrmLiteConfig.UpdateFilter != null)
-                OrmLiteConfig.UpdateFilter(dbCmd, item);
+            OrmLiteConfig.UpdateFilter?.Invoke(dbCmd, item);
 
             var q = dbCmd.GetDialectProvider().SqlExpression<T>();
             q.Where(obj);
-            var sql = q.ToUpdateStatement(item, excludeDefaults: true);
-            return dbCmd.ExecuteSqlAsync(sql, token);
+            q.PrepareUpdateStatement(dbCmd, item, excludeDefaults: true);
+            return dbCmd.ExecNonQueryAsync(token);
         }
 
-        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, T item, Expression<Func<T, bool>> expression, CancellationToken token)
+        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, T item, Expression<Func<T, bool>> expression, Action<IDbCommand> commandFilter, CancellationToken token)
         {
-            if (OrmLiteConfig.UpdateFilter != null)
-                OrmLiteConfig.UpdateFilter(dbCmd, item);
+            OrmLiteConfig.UpdateFilter?.Invoke(dbCmd, item);
 
             var q = dbCmd.GetDialectProvider().SqlExpression<T>();
             q.Where(expression);
-            var sql = q.ToUpdateStatement(item);
+            q.PrepareUpdateStatement(dbCmd, item);
+            commandFilter?.Invoke(dbCmd);
+            return dbCmd.ExecNonQueryAsync(token);
+        }
+
+        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, object updateOnly, Expression<Func<T, bool>> where, Action<IDbCommand> commandFilter, CancellationToken token)
+        {
+            var q = dbCmd.GetDialectProvider().SqlExpression<T>();
+            var whereSql = q.Where(where).WhereExpression;
+            q.CopyParamsTo(dbCmd);
+            dbCmd.PrepareUpdateAnonSql<T>(dbCmd.GetDialectProvider(), updateOnly, whereSql);
+            commandFilter?.Invoke(dbCmd);
+
+            return dbCmd.ExecNonQueryAsync(token);
+        }
+
+        internal static Task InsertOnlyAsync<T>(this IDbCommand dbCmd, T obj, string[] onlyFields, CancellationToken token)
+        {
+            OrmLiteConfig.InsertFilter?.Invoke(dbCmd, obj);
+
+            var sql = dbCmd.GetDialectProvider().ToInsertRowStatement(dbCmd, obj, onlyFields);
             return dbCmd.ExecuteSqlAsync(sql, token);
         }
 
-        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, object updateOnly, Expression<Func<T, bool>> where, CancellationToken token)
+        public static Task<int> InsertOnlyAsync<T>(this IDbCommand dbCmd, Expression<Func<T>> insertFields, CancellationToken token)
         {
-            var updateSql = WriteExpressionCommandExtensions.UpdateSql(dbCmd.GetDialectProvider(), updateOnly, where);
-            return dbCmd.ExecuteSqlAsync(updateSql, token);
-        }
-
-        internal static Task<int> UpdateFmtAsync<T>(this IDbCommand dbCmd, string set, string where, CancellationToken token)
-        {
-            return dbCmd.UpdateFmtAsync(typeof(T).GetModelDefinition().ModelName, set, where, token);
-        }
-
-        internal static Task<int> UpdateFmtAsync(this IDbCommand dbCmd, string table, string set, string where, CancellationToken token)
-        {
-            var sql = WriteExpressionCommandExtensions.UpdateFmtSql(dbCmd.GetDialectProvider(), table, set, @where);
-            return dbCmd.ExecuteSqlAsync(sql.ToString(), token);
-        }
-
-        internal static Task InsertOnlyAsync<T>(this IDbCommand dbCmd, T obj, Func<SqlExpression<T>, SqlExpression<T>> onlyFields, CancellationToken token)
-        {
-            return dbCmd.InsertOnlyAsync(obj, onlyFields(dbCmd.GetDialectProvider().SqlExpression<T>()), token);
-        }
-
-        internal static Task InsertOnlyAsync<T>(this IDbCommand dbCmd, T obj, SqlExpression<T> onlyFields, CancellationToken token)
-        {
-            if (OrmLiteConfig.InsertFilter != null)
-                OrmLiteConfig.InsertFilter(dbCmd, obj);
-
-            var sql = dbCmd.GetDialectProvider().ToInsertRowStatement(dbCmd, obj, onlyFields.InsertFields);
-            return dbCmd.ExecuteSqlAsync(sql, token);
+            return dbCmd.InitInsertOnly(insertFields).ExecNonQueryAsync(token);
         }
 
         internal static Task<int> DeleteAsync<T>(this IDbCommand dbCmd, Expression<Func<T, bool>> where, CancellationToken token)
         {
-            var ev = dbCmd.GetDialectProvider().SqlExpression<T>();
-            ev.Where(where);
-            return dbCmd.DeleteAsync(ev, token);
+            var q = dbCmd.GetDialectProvider().SqlExpression<T>();
+            q.Where(where);
+            return dbCmd.DeleteAsync(q, token);
         }
 
-        internal static Task<int> DeleteAsync<T>(this IDbCommand dbCmd, Func<SqlExpression<T>, SqlExpression<T>> where, CancellationToken token)
+        internal static Task<int> DeleteAsync<T>(this IDbCommand dbCmd, SqlExpression<T> q, CancellationToken token)
         {
-            return dbCmd.DeleteAsync(where(dbCmd.GetDialectProvider().SqlExpression<T>()), token);
-        }
-
-        internal static Task<int> DeleteAsync<T>(this IDbCommand dbCmd, SqlExpression<T> where, CancellationToken token)
-        {
-            var sql = where.ToDeleteRowStatement();
-            return dbCmd.ExecuteSqlAsync(sql, token);
-        }
-
-        internal static Task<int> DeleteFmtAsync<T>(this IDbCommand dbCmd, string where, CancellationToken token)
-        {
-            return dbCmd.DeleteFmtAsync(typeof(T).GetModelDefinition().ModelName, where, token);
-        }
-
-        internal static Task<int> DeleteFmtAsync(this IDbCommand dbCmd, string table, string where, CancellationToken token)
-        {
-            var sql = WriteExpressionCommandExtensions.DeleteFmtSql(dbCmd.GetDialectProvider(), table, @where);
-            return dbCmd.ExecuteSqlAsync(sql.ToString(), token);
+            var sql = q.ToDeleteRowStatement();
+            return dbCmd.ExecuteSqlAsync(sql, q.Params, token);
         }
     }
 }
+
 #endif

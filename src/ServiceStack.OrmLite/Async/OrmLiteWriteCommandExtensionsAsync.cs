@@ -1,5 +1,5 @@
-#if NET45
-// Copyright (c) Service Stack LLC. All Rights Reserved.
+#if ASYNC
+// Copyright (c) ServiceStack, Inc. All Rights Reserved.
 // License: https://raw.github.com/ServiceStack/ServiceStack/master/license.txt
 
 using System;
@@ -18,28 +18,43 @@ namespace ServiceStack.OrmLite
     {
         private static readonly ILog Log = LogManager.GetLogger(typeof(OrmLiteWriteCommandExtensionsAsync));
 
-        private static void LogDebug(string fmt)
+        internal static Task<int> ExecuteSqlAsync(this IDbCommand dbCmd, string sql, IEnumerable<IDbDataParameter> sqlParams, CancellationToken token)
         {
-            Log.Debug(fmt);
+            return dbCmd.SetParameters(sqlParams).ExecuteSqlAsync(sql, token);
         }
 
         internal static Task<int> ExecuteSqlAsync(this IDbCommand dbCmd, string sql, CancellationToken token)
         {
-            if (Log.IsDebugEnabled)
-                LogDebug(sql);
-
             dbCmd.CommandText = sql;
 
             if (OrmLiteConfig.ResultsFilter != null)
                 return OrmLiteConfig.ResultsFilter.ExecuteSql(dbCmd).InTask();
 
-            return dbCmd.GetDialectProvider().ExecuteNonQueryAsync(dbCmd);
+            if (Log.IsDebugEnabled)
+                Log.DebugCommand(dbCmd);
+
+            return dbCmd.GetDialectProvider().ExecuteNonQueryAsync(dbCmd, token);
         }
 
-        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, T obj, CancellationToken token)
+        internal static Task<int> ExecuteSqlAsync(this IDbCommand dbCmd, string sql, object anonType, CancellationToken token)
         {
-            if (OrmLiteConfig.UpdateFilter != null)
-                OrmLiteConfig.UpdateFilter(dbCmd, obj);
+            if (anonType != null)
+                dbCmd.SetParameters(anonType.ToObjectDictionary(), excludeDefaults: false);
+
+            dbCmd.CommandText = sql;
+
+            if (Log.IsDebugEnabled)
+                Log.DebugCommand(dbCmd);
+
+            if (OrmLiteConfig.ResultsFilter != null)
+                return OrmLiteConfig.ResultsFilter.ExecuteSql(dbCmd).InTask();
+
+            return dbCmd.GetDialectProvider().ExecuteNonQueryAsync(dbCmd, token);
+        }
+
+        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, T obj, CancellationToken token, Action<IDbCommand> commandFilter)
+        {
+            OrmLiteConfig.UpdateFilter?.Invoke(dbCmd, obj);
 
             var dialectProvider = dbCmd.GetDialectProvider();
             var hadRowVersion = dialectProvider.PrepareParameterizedUpdateStatement<T>(dbCmd);
@@ -47,8 +62,9 @@ namespace ServiceStack.OrmLite
                 return TaskResult.Zero;
 
             dialectProvider.SetParameterValues<T>(dbCmd, obj);
+            commandFilter?.Invoke(dbCmd);
 
-            return dialectProvider.ExecuteNonQueryAsync(dbCmd)
+            return dialectProvider.ExecuteNonQueryAsync(dbCmd, token)
                 .Then(rowsUpdated =>
                 {
                     if (hadRowVersion && rowsUpdated == 0)
@@ -57,12 +73,12 @@ namespace ServiceStack.OrmLite
                 });
         }
 
-        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, CancellationToken token, params T[] objs)
+        internal static Task<int> UpdateAsync<T>(this IDbCommand dbCmd, CancellationToken token, Action<IDbCommand> commandFilter, T[] objs)
         {
-            return dbCmd.UpdateAllAsync(objs, token);
+            return dbCmd.UpdateAllAsync(objs, token, commandFilter);
         }
 
-        internal static Task<int> UpdateAllAsync<T>(this IDbCommand dbCmd, IEnumerable<T> objs, CancellationToken token)
+        internal static Task<int> UpdateAllAsync<T>(this IDbCommand dbCmd, IEnumerable<T> objs, CancellationToken token, Action<IDbCommand> commandFilter)
         {
             IDbTransaction dbTrans = null;
 
@@ -78,10 +94,11 @@ namespace ServiceStack.OrmLite
 
             return objs.EachAsync((obj, i) =>
             {
-                if (OrmLiteConfig.UpdateFilter != null)
-                    OrmLiteConfig.UpdateFilter(dbCmd, obj);
+                OrmLiteConfig.UpdateFilter?.Invoke(dbCmd, obj);
 
                 dialectProvider.SetParameterValues<T>(dbCmd, obj);
+                commandFilter?.Invoke(dbCmd);
+                commandFilter = null;
 
                 return dbCmd.ExecNonQueryAsync(token).Then(rowsUpdated =>
                 {
@@ -96,14 +113,13 @@ namespace ServiceStack.OrmLite
                 if (dbTrans != null && t.IsSuccess())
                     dbTrans.Commit();
 
-                if (dbTrans != null)
-                    dbTrans.Dispose();
+                dbTrans?.Dispose();
 
                 if (t.IsFaulted)
                     throw t.Exception;
 
                 return count;
-            });
+            }, token);
         }
 
         private static Task<int> AssertRowsUpdatedAsync(IDbCommand dbCmd, bool hadRowVersion, CancellationToken token)
@@ -188,11 +204,10 @@ namespace ServiceStack.OrmLite
                 if (dbTrans != null && t.IsSuccess())
                     dbTrans.Commit();
 
-                if (dbTrans != null)
-                    dbTrans.Dispose();
+                dbTrans?.Dispose();
 
                 return count;
-            });
+            }, token);
         }
 
         internal static Task<int> DeleteByIdAsync<T>(this IDbCommand dbCmd, object id, CancellationToken token)
@@ -215,8 +230,8 @@ namespace ServiceStack.OrmLite
 
         internal static Task<int> DeleteByIdsAsync<T>(this IDbCommand dbCmd, IEnumerable idValues, CancellationToken token)
         {
-            var sqlIn = idValues.GetIdsInSql();
-            if (sqlIn == null) 
+            var sqlIn = dbCmd.SetIdsInSqlParams(idValues);
+            if (string.IsNullOrEmpty(sqlIn))
                 return TaskResult.Zero;
 
             var sql = OrmLiteWriteCommandExtensions.GetDeleteByIdsSql<T>(sqlIn, dbCmd.GetDialectProvider());
@@ -235,25 +250,27 @@ namespace ServiceStack.OrmLite
             return dbCmd.ExecuteSqlAsync(dialectProvider.ToDeleteStatement(tableType, null), token);
         }
 
-        internal static Task<int> DeleteFmtAsync<T>(this IDbCommand dbCmd, CancellationToken token, string sqlFilter, params object[] filterParams)
+        internal static Task<int> DeleteAsync<T>(this IDbCommand dbCmd, string sql, object anonType, CancellationToken token)
         {
-            return DeleteFmtAsync(dbCmd, token, typeof(T), sqlFilter, filterParams);
+            if (anonType != null) dbCmd.SetParameters<T>(anonType, excludeDefaults: false);
+            return dbCmd.ExecuteSqlAsync(dbCmd.GetDialectProvider().ToDeleteStatement(typeof(T), sql), token);
         }
 
-        internal static Task<int> DeleteFmtAsync(this IDbCommand dbCmd, CancellationToken token, Type tableType, string sqlFilter, params object[] filterParams)
+        internal static Task<int> DeleteAsync(this IDbCommand dbCmd, Type tableType, string sql, object anonType, CancellationToken token)
         {
-            var dialectProvider = dbCmd.GetDialectProvider();
-            return dbCmd.ExecuteSqlAsync(dialectProvider.ToDeleteStatement(tableType, sqlFilter, filterParams), token);
+            if (anonType != null) dbCmd.SetParameters(tableType, anonType, excludeDefaults: false);
+            return dbCmd.ExecuteSqlAsync(dbCmd.GetDialectProvider().ToDeleteStatement(tableType, sql), token);
         }
 
         internal static Task<long> InsertAsync<T>(this IDbCommand dbCmd, T obj, bool selectIdentity, CancellationToken token)
         {
-            if (OrmLiteConfig.InsertFilter != null)
-                OrmLiteConfig.InsertFilter(dbCmd, obj);
+            OrmLiteConfig.InsertFilter?.Invoke(dbCmd, obj);
 
             var dialectProvider = dbCmd.GetDialectProvider();
 
-            dialectProvider.PrepareParameterizedInsertStatement<T>(dbCmd);
+            dialectProvider.PrepareParameterizedInsertStatement<T>(dbCmd,
+                insertFields: OrmLiteUtils.GetNonDefaultValueInsertFields(obj));
+
             dialectProvider.SetParameterValues<T>(dbCmd, obj);
 
             if (selectIdentity)
@@ -280,8 +297,7 @@ namespace ServiceStack.OrmLite
 
             return objs.EachAsync((obj, i) =>
             {
-                if (OrmLiteConfig.InsertFilter != null)
-                    OrmLiteConfig.InsertFilter(dbCmd, obj);
+                OrmLiteConfig.InsertFilter?.Invoke(dbCmd, obj);
 
                 dialectProvider.SetParameterValues<T>(dbCmd, obj);
 
@@ -292,12 +308,11 @@ namespace ServiceStack.OrmLite
                 if (dbTrans != null && t.IsSuccess())
                     dbTrans.Commit();
 
-                if (dbTrans != null)
-                    dbTrans.Dispose();
+                dbTrans?.Dispose();
 
                 if (t.IsFaulted)
                     throw t.Exception;
-            });
+            }, token);
         }
 
 
@@ -318,7 +333,7 @@ namespace ServiceStack.OrmLite
                 {
 
                     var newId = await dbCmd.InsertAsync(obj, selectIdentity: true, token:token);
-                    var safeId = dbCmd.GetDialectProvider().ConvertDbValue(newId, modelDef.PrimaryKey.FieldType);
+                    var safeId = dbCmd.GetDialectProvider().FromDbValue(newId, modelDef.PrimaryKey.FieldType);
                     modelDef.PrimaryKey.SetValueFn(obj, safeId);
                     id = newId;
                 }
@@ -327,16 +342,14 @@ namespace ServiceStack.OrmLite
                     await dbCmd.InsertAsync(token, obj);
                 }
 
-                if (modelDef.RowVersion != null)
-                    modelDef.RowVersion.SetValueFn(obj, await dbCmd.GetRowVersionAsync(modelDef, id, token));
+                modelDef.RowVersion?.SetValueFn(obj, await dbCmd.GetRowVersionAsync(modelDef, id, token));
 
                 return true;
             }
 
-            await dbCmd.UpdateAsync(obj, token);
+            await dbCmd.UpdateAsync(obj, token, null);
 
-            if (modelDef.RowVersion != null)
-                modelDef.RowVersion.SetValueFn(obj, await dbCmd.GetRowVersionAsync(modelDef, id, token));
+            modelDef.RowVersion?.SetValueFn(obj, await dbCmd.GetRowVersionAsync(modelDef, id, token));
 
             return false;
         }
@@ -351,7 +364,7 @@ namespace ServiceStack.OrmLite
             var modelDef = typeof(T).GetModelDefinition();
 
             var firstRowId = modelDef.GetPrimaryKey(firstRow);
-            var defaultIdValue = firstRowId != null ? firstRowId.GetType().GetDefaultValue() : null;
+            var defaultIdValue = firstRowId?.GetType().GetDefaultValue();
 
             var idMap = defaultIdValue != null
                 ? saveRows.Where(x => !defaultIdValue.Equals(modelDef.GetPrimaryKey(x))).ToSafeDictionary(x => modelDef.GetPrimaryKey(x))
@@ -375,17 +388,16 @@ namespace ServiceStack.OrmLite
                     var id = modelDef.GetPrimaryKey(row);
                     if (id != defaultIdValue && existingRowsMap.ContainsKey(id))
                     {
-                        if (OrmLiteConfig.UpdateFilter != null)
-                            OrmLiteConfig.UpdateFilter(dbCmd, row);
+                        OrmLiteConfig.UpdateFilter?.Invoke(dbCmd, row);
 
-                        await dbCmd.UpdateAsync(row, token);
+                        await dbCmd.UpdateAsync(row, token, null);
                     }
                     else
                     {
                         if (modelDef.HasAutoIncrementId)
                         {
                             var newId = await dbCmd.InsertAsync(row, selectIdentity: true, token:token);
-                            var safeId = dialectProvider.ConvertDbValue(newId, modelDef.PrimaryKey.FieldType);
+                            var safeId = dialectProvider.FromDbValue(newId, modelDef.PrimaryKey.FieldType);
                             modelDef.PrimaryKey.SetValueFn(row, safeId);
                             id = newId;
                         }
@@ -400,17 +412,14 @@ namespace ServiceStack.OrmLite
                         rowsAdded++;
                     }
 
-                    if (modelDef.RowVersion != null)
-                        modelDef.RowVersion.SetValueFn(row, await dbCmd.GetRowVersionAsync(modelDef, id, token));
+                    modelDef.RowVersion?.SetValueFn(row, await dbCmd.GetRowVersionAsync(modelDef, id, token));
                 }
 
-                if (dbTrans != null)
-                    dbTrans.Commit();
+                dbTrans?.Commit();
             }
             finally
             {
-                if (dbTrans != null)
-                    dbTrans.Dispose();
+                dbTrans?.Dispose();
             }
 
             return rowsAdded;
@@ -457,8 +466,7 @@ namespace ServiceStack.OrmLite
 
                     if (result != null)
                     {
-                        if (refField != null)
-                            refField.SetValueFn(result, pkValue);
+                        refField?.SetValueFn(result, pkValue);
 
                         await dbCmd.CreateTypedApi(refType).SaveAsync(result, token);
 
@@ -467,7 +475,7 @@ namespace ServiceStack.OrmLite
                         {
                             var refPkValue = refModelDef.PrimaryKey.GetValue(result);
                             refSelf.SetValueFn(instance, refPkValue);
-                            await dbCmd.UpdateAsync(instance, token);
+                            await dbCmd.UpdateAsync(instance, token, null);
                         }
                     }
                 }
@@ -490,8 +498,7 @@ namespace ServiceStack.OrmLite
                     ? modelDef.GetRefFieldDef(refModelDef, refType)
                     : modelDef.GetRefFieldDefIfExists(refModelDef);
 
-                if (refField != null)
-                    refField.SetValueFn(oRef, pkValue);
+                refField?.SetValueFn(oRef, pkValue);
             }
 
             await dbCmd.SaveAllAsync(refs, token);
@@ -503,7 +510,7 @@ namespace ServiceStack.OrmLite
                 {
                     var refPkValue = refModelDef.PrimaryKey.GetValue(oRef);
                     refSelf.SetValueFn(instance, refPkValue);
-                    await dbCmd.UpdateAsync(instance, token);
+                    await dbCmd.UpdateAsync(instance, token, null);
                 }
             }
         }
@@ -520,7 +527,8 @@ namespace ServiceStack.OrmLite
         internal static Task<ulong> GetRowVersionAsync(this IDbCommand dbCmd, ModelDefinition modelDef, object id, CancellationToken token)
         {
             var sql = dbCmd.RowVersionSql(modelDef, id);
-            return dbCmd.ScalarAsync<ulong>(sql, token);
+            return dbCmd.ScalarAsync<ulong>(sql, token)
+                .Success(x => dbCmd.GetDialectProvider().FromDbRowVersion(x));
         }
     }
 }

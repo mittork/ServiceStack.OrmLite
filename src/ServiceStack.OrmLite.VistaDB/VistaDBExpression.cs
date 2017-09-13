@@ -1,7 +1,9 @@
 ﻿using System;
+using System.Data;
 using System.Linq;
 using System.Text;
 using System.Linq.Expressions;
+using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite.VistaDB
 {
@@ -10,10 +12,11 @@ namespace ServiceStack.OrmLite.VistaDB
         public VistaDbExpression(IOrmLiteDialectProvider dialectProvider) 
             : base(dialectProvider) {}
 
-        public override string ToUpdateStatement(T item, bool excludeDefaults = false)
+        public override void PrepareUpdateStatement(IDbCommand dbCmd, T item, bool excludeDefaults = false)
         {
-            var setFields = new StringBuilder();
-            var dialectProvider = OrmLiteConfig.DialectProvider;
+            CopyParamsTo(dbCmd);
+
+            var setFields = StringBuilderCache.Allocate();
 
             foreach (var fieldDef in ModelDef.FieldDefinitions)
             {
@@ -21,19 +24,25 @@ namespace ServiceStack.OrmLite.VistaDB
                     continue; // added
 
                 var value = fieldDef.GetValue(item);
-                if (excludeDefaults && (value == null || value.Equals(value.GetType().GetDefaultValue())))
-                    continue; //GetDefaultValue?
+                if (excludeDefaults
+                    && (value == null || (!fieldDef.IsNullable && value.Equals(value.GetType().GetDefaultValue()))))
+                    continue;
 
-                fieldDef.GetQuotedValue(item);
+                if (setFields.Length > 0)
+                    setFields.Append(", ");
 
-                if (setFields.Length > 0) setFields.Append(",");
-                setFields.AppendFormat("{0} = {1}",
-                    dialectProvider.GetQuotedColumnName(fieldDef.FieldName),
-                    dialectProvider.GetQuotedValue(value, fieldDef.FieldType));
+                var param = DialectProvider.AddParam(dbCmd, value, fieldDef);
+                setFields
+                    .Append(DialectProvider.GetQuotedColumnName(fieldDef.FieldName))
+                    .Append("=")
+                    .Append(param.ParameterName);
             }
 
-            return string.Format("UPDATE {0} SET {1} {2}",
-                dialectProvider.GetQuotedTableName(ModelDef), setFields, WhereExpression);
+            var strFields = StringBuilderCache.ReturnAndFree(setFields);
+            if (strFields.Length == 0)
+                throw new ArgumentException("No non-null or non-default values were provided for type: " + typeof(T).Name);
+
+            dbCmd.CommandText = $"UPDATE {DialectProvider.GetQuotedTableName(ModelDef)} SET {strFields} {WhereExpression}";
         }
 
         protected override object VisitColumnAccessMethod(MethodCallExpression m)
@@ -49,6 +58,13 @@ namespace ServiceStack.OrmLite.VistaDB
             {
                 return base.VisitColumnAccessMethod(m);
             }
+        }
+
+        public override string GetSubstringSql(object quotedColumn, int startIndex, int? length = null)
+        {
+            return length != null
+                ? $"substring({quotedColumn}, {startIndex}, {length.Value})"
+                : $"substring({quotedColumn}, {startIndex}, LEN({quotedColumn}) - {startIndex} + 1)";
         }
     }
 }

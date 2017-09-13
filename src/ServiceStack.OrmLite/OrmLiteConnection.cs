@@ -8,10 +8,11 @@ namespace ServiceStack.OrmLite
     /// Wrapper IDbConnection class to allow for connection sharing, mocking, etc.
     /// </summary>
     public class OrmLiteConnection
-        : IDbConnection, IHasDbConnection, IHasDbTransaction
+        : IDbConnection, IHasDbConnection, IHasDbTransaction, ISetDbTransaction
     {
         public readonly OrmLiteConnectionFactory Factory;
         public IDbTransaction Transaction { get; set; }
+        public IDbTransaction DbTransaction => Transaction;
         private IDbConnection dbConnection;
 
         public IOrmLiteDialectProvider DialectProvider { get; set; }
@@ -24,21 +25,11 @@ namespace ServiceStack.OrmLite
             this.DialectProvider = factory.DialectProvider;
         }
 
-        public IDbConnection DbConnection
-        {
-            get
-            {
-                if (dbConnection == null)
-                {
-                    dbConnection = ConnectionString.ToDbConnection(Factory.DialectProvider);
-                }
-                return dbConnection;
-            }
-        }
+        public IDbConnection DbConnection => dbConnection ?? (dbConnection = ConnectionString.ToDbConnection(Factory.DialectProvider));
 
         public void Dispose()
         {
-            if (Factory.OnDispose != null) Factory.OnDispose(this);
+            Factory.OnDispose?.Invoke(this);
             if (!Factory.AutoDisposeConnection) return;
 
             DbConnection.Dispose();
@@ -102,20 +93,11 @@ namespace ServiceStack.OrmLite
             set { connectionString = value; }
         }
 
-        public int ConnectionTimeout
-        {
-            get { return DbConnection.ConnectionTimeout; }
-        }
+        public int ConnectionTimeout => DbConnection.ConnectionTimeout;
 
-        public string Database
-        {
-            get { return DbConnection.Database; }
-        }
+        public string Database => DbConnection.Database;
 
-        public ConnectionState State
-        {
-            get { return DbConnection.State; }
-        }
+        public ConnectionState State => DbConnection.State;
 
         public bool AutoDisposeConnection { get; set; }
 
@@ -125,7 +107,7 @@ namespace ServiceStack.OrmLite
         }
     }
 
-    internal interface IHasDbTransaction
+    internal interface ISetDbTransaction
     {
         IDbTransaction Transaction { get; set; }
     }

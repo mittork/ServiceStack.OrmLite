@@ -4,7 +4,7 @@
 // Authors:
 //   Demis Bellot (demis.bellot@gmail.com)
 //
-// Copyright 2013 Service Stack LLC. All Rights Reserved.
+// Copyright 2013 ServiceStack, Inc. All Rights Reserved.
 //
 // Licensed under the same terms of ServiceStack.
 //
@@ -21,12 +21,6 @@ namespace ServiceStack.OrmLite
     internal static class OrmLiteConfigExtensions
     {
         private static Dictionary<Type, ModelDefinition> typeModelDefinitionMap = new Dictionary<Type, ModelDefinition>();
-
-        private static bool IsNullableType(Type theType)
-        {
-            return (theType.IsGenericType
-                && theType.GetGenericTypeDefinition() == typeof(Nullable<>));
-        }
 
         internal static bool CheckForIdField(IEnumerable<PropertyInfo> objProperties)
         {
@@ -66,16 +60,16 @@ namespace ServiceStack.OrmLite
             {
                 ModelType = modelType,
                 Name = modelType.Name,
-                Alias = modelAliasAttr != null ? modelAliasAttr.Name : null,
-                Schema = schemaAttr != null ? schemaAttr.Name : null,
-                PreCreateTableSql = preCreate != null ? preCreate.Sql : null,
-                PostCreateTableSql = postCreate != null ? postCreate.Sql : null,
-                PreDropTableSql = preDrop != null ? preDrop.Sql : null,
-                PostDropTableSql = postDrop != null ? postDrop.Sql : null,
+                Alias = modelAliasAttr?.Name,
+                Schema = schemaAttr?.Name,
+                PreCreateTableSql = preCreate?.Sql,
+                PostCreateTableSql = postCreate?.Sql,
+                PreDropTableSql = preDrop?.Sql,
+                PostDropTableSql = postDrop?.Sql,
             };
 
             modelDef.CompositeIndexes.AddRange(
-                modelType.GetCustomAttributes(typeof(CompositeIndexAttribute), true).ToList()
+                modelType.AllAttributes<CompositeIndexAttribute>().ToList()
                 .ConvertAll(x => (CompositeIndexAttribute)x));
 
             var objProperties = modelType.GetProperties(
@@ -93,6 +87,8 @@ namespace ServiceStack.OrmLite
 
                 var sequenceAttr = propertyInfo.FirstAttribute<SequenceAttribute>();
                 var computeAttr = propertyInfo.FirstAttribute<ComputeAttribute>();
+                var computedAttr = propertyInfo.FirstAttribute<ComputedAttribute>();
+                var customSelectAttr = propertyInfo.FirstAttribute<CustomSelectAttribute>();
                 var decimalAttribute = propertyInfo.FirstAttribute<DecimalLengthAttribute>();
                 var belongToAttribute = propertyInfo.FirstAttribute<BelongToAttribute>();
                 var isFirst = i++ == 0;
@@ -103,9 +99,9 @@ namespace ServiceStack.OrmLite
                 var isRowVersion = propertyInfo.Name == ModelDefinition.RowVersionName
                     && propertyInfo.PropertyType == typeof(ulong);
 
-                var isNullableType = IsNullableType(propertyInfo.PropertyType);
+                var isNullableType = propertyInfo.PropertyType.IsNullableType();
 
-                var isNullable = (!propertyInfo.PropertyType.IsValueType
+                var isNullable = (!propertyInfo.PropertyType.IsValueType()
                                    && !propertyInfo.HasAttributeNamed(typeof(RequiredAttribute).Name))
                                    || isNullableType;
 
@@ -114,15 +110,8 @@ namespace ServiceStack.OrmLite
                     : propertyInfo.PropertyType;
 
                 Type treatAsType = null;
-                if (propertyType.IsEnumFlags())
-                {
+                if (propertyType.IsEnumFlags() || propertyType.HasAttribute<EnumAsIntAttribute>())
                     treatAsType = Enum.GetUnderlyingType(propertyType);
-                }
-
-                if (propertyType == typeof(TimeSpan))
-                {
-                    treatAsType = typeof(long);
-                }
 
                 var aliasAttr = propertyInfo.FirstAttribute<AliasAttribute>();
 
@@ -136,49 +125,50 @@ namespace ServiceStack.OrmLite
 
                 var referencesAttr = propertyInfo.FirstAttribute<ReferencesAttribute>();
                 var referenceAttr = propertyInfo.FirstAttribute<ReferenceAttribute>();
-                var foreignKeyAttr = propertyInfo.FirstAttribute<ForeignKeyAttribute>();
+                var fkAttr = propertyInfo.FirstAttribute<ForeignKeyAttribute>();
                 var customFieldAttr = propertyInfo.FirstAttribute<CustomFieldAttribute>();
+                var chkConstraintAttr = propertyInfo.FirstAttribute<CheckConstraintAttribute>();
 
                 var fieldDefinition = new FieldDefinition
                 {
                     Name = propertyInfo.Name,
-                    Alias = aliasAttr != null ? aliasAttr.Name : null,
+                    Alias = aliasAttr?.Name,
                     FieldType = propertyType,
+                    FieldTypeDefaultValue = propertyType.GetDefaultValue(),
                     TreatAsType = treatAsType,
                     PropertyInfo = propertyInfo,
                     IsNullable = isNullable,
                     IsPrimaryKey = isPrimaryKey,
                     AutoIncrement =
                         isPrimaryKey &&
-                        propertyInfo.HasAttributeNamed(typeof(AutoIncrementAttribute).Name),
-                    IsIndexed = isIndex,
+                        propertyInfo.HasAttributeNamed(nameof(AutoIncrementAttribute)),
+                    IsIndexed = !isPrimaryKey && isIndex,
                     IsUnique = isUnique,
                     IsClustered = indexAttr != null && indexAttr.Clustered,
                     IsNonClustered = indexAttr != null && indexAttr.NonClustered,
                     IsRowVersion = isRowVersion,
-                    FieldLength = stringLengthAttr != null
-                        ? stringLengthAttr.MaximumLength
-                        : (int?)null,
-                    DefaultValue = defaultValueAttr != null ? defaultValueAttr.DefaultValue : null,
-                    ForeignKey = foreignKeyAttr == null
+                    IgnoreOnInsert = propertyInfo.HasAttributeNamed(nameof(IgnoreOnInsertAttribute)),
+                    IgnoreOnUpdate = propertyInfo.HasAttributeNamed(nameof(IgnoreOnUpdateAttribute)),
+                    FieldLength = stringLengthAttr?.MaximumLength,
+                    DefaultValue = defaultValueAttr?.DefaultValue,
+                    CheckConstraint = chkConstraintAttr?.Constraint,
+                    ForeignKey = fkAttr == null
                         ? referencesAttr != null ? new ForeignKeyConstraint(referencesAttr.Type) : null
-                        : new ForeignKeyConstraint(foreignKeyAttr.Type,
-                                                    foreignKeyAttr.OnDelete,
-                                                    foreignKeyAttr.OnUpdate,
-                                                    foreignKeyAttr.ForeignKeyName),
-                    IsReference = referenceAttr != null && propertyType.IsClass,
-                    GetValueFn = propertyInfo.GetPropertyGetterFn(),
-                    SetValueFn = propertyInfo.GetPropertySetterFn(),
+                        : new ForeignKeyConstraint(fkAttr.Type, fkAttr.OnDelete, fkAttr.OnUpdate, fkAttr.ForeignKeyName),
+                    IsReference = referenceAttr != null && propertyType.IsClass(),
+                    GetValueFn = propertyInfo.CreateGetter(),
+                    SetValueFn = propertyInfo.CreateSetter(),
                     Sequence = sequenceAttr != null ? sequenceAttr.Name : string.Empty,
-                    IsComputed = computeAttr != null,
+                    IsComputed = computeAttr != null || computedAttr != null || customSelectAttr != null,
                     ComputeExpression = computeAttr != null ? computeAttr.Expression : string.Empty,
-                    Scale = decimalAttribute != null ? decimalAttribute.Scale : (int?)null,
-                    BelongToModelName = belongToAttribute != null ? belongToAttribute.BelongToTableType.GetModelDefinition().ModelName : null,
-                    CustomFieldDefinition = customFieldAttr != null ? customFieldAttr.Sql : null,
+                    CustomSelect = customSelectAttr?.Sql,
+                    Scale = decimalAttribute?.Scale,
+                    BelongToModelName = belongToAttribute?.BelongToTableType.GetModelDefinition().ModelName,
+                    CustomFieldDefinition = customFieldAttr?.Sql,
                     IsRefType = propertyType.IsRefType(),
                 };
-                
-                var isIgnored = propertyInfo.HasAttributeNamed(typeof(IgnoreAttribute).Name)
+
+                var isIgnored = propertyInfo.HasAttributeNamed(nameof(IgnoreAttribute))
                     || fieldDefinition.IsReference;
                 if (isIgnored)
                     modelDef.IgnoredFieldDefinitions.Add(fieldDefinition);
@@ -195,8 +185,7 @@ namespace ServiceStack.OrmLite
             do
             {
                 snapshot = typeModelDefinitionMap;
-                newCache = new Dictionary<Type, ModelDefinition>(typeModelDefinitionMap);
-                newCache[modelType] = modelDef;
+                newCache = new Dictionary<Type, ModelDefinition>(typeModelDefinitionMap) { [modelType] = modelDef };
 
             } while (!ReferenceEquals(
                 Interlocked.CompareExchange(ref typeModelDefinitionMap, newCache, snapshot), snapshot));

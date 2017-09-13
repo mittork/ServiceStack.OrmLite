@@ -1,6 +1,7 @@
 ﻿using System;
 using NUnit.Framework;
 using ServiceStack.DataAnnotations;
+using ServiceStack.OrmLite.Converters;
 using ServiceStack.OrmLite.Tests;
 
 namespace ServiceStack.OrmLite.PostgreSQL.Tests
@@ -31,13 +32,14 @@ namespace ServiceStack.OrmLite.PostgreSQL.Tests
             _reCreateTheTable();
 
             //all of these pass now:
-            OrmLiteConfig.DialectProvider.UseUnicode = true;
+            var stringConverter = OrmLiteConfig.DialectProvider.GetStringConverter();
+            stringConverter.UseUnicode = true;
             _reCreateTheTable();
 
-            OrmLiteConfig.DialectProvider.UseUnicode = false;
+            stringConverter.UseUnicode = false;
             _reCreateTheTable();
 
-            OrmLiteConfig.DialectProvider.DefaultStringLength = 98765;
+            stringConverter.StringLength = 98765;
 
             _reCreateTheTable();
         }
@@ -108,9 +110,9 @@ namespace ServiceStack.OrmLite.PostgreSQL.Tests
 BEGIN
 
     IF NOT EXISTS(
-        SELECT schema_name
-          FROM information_schema.schemata
-          WHERE schema_name = '{0}'
+        SELECT 1
+          FROM INFORMATION_SCHEMA.SCHEMATA
+          WHERE SCHEMA_NAME = '{0}'
       )
     THEN
       EXECUTE 'CREATE SCHEMA ""{0}""';

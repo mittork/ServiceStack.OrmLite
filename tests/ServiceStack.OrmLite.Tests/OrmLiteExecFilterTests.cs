@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Data;
 using System.Linq;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using ServiceStack.Common.Tests.Models;
+using ServiceStack.OrmLite.Tests.Expression;
 using ServiceStack.OrmLite.Tests.Shared;
 using ServiceStack.Text;
 
@@ -39,7 +41,24 @@ namespace ServiceStack.OrmLite.Tests
             {
                 return base.Exec(dbConn, filter);
             }
-            catch (Exception ex)
+            catch (Exception)
+            {
+                var sql = dbConn.GetLastSql();
+                if (sql == "exec sp_name @firstName, @age")
+                {
+                    return (T)(object)new Person { FirstName = "Mocked" };
+                }
+                throw;
+            }
+        }
+
+        public override async Task<T> Exec<T>(IDbConnection dbConn, Func<IDbCommand, Task<T>> filter)
+        {
+            try
+            {
+                return await base.Exec(dbConn, filter);
+            }
+            catch (Exception)
             {
                 var sql = dbConn.GetLastSql();
                 if (sql == "exec sp_name @firstName, @age")
@@ -84,7 +103,24 @@ namespace ServiceStack.OrmLite.Tests
             using (var db = OpenDbConnection())
             {
                 var person = db.SqlScalar<Person>("exec sp_name @firstName, @age",
-                    new {firstName = "aName", age = 1});
+                    new { firstName = "aName", age = 1 });
+
+                Assert.That(person.FirstName, Is.EqualTo("Mocked"));
+            }
+
+            OrmLiteConfig.DialectProvider.ExecFilter = holdExecFilter;
+        }
+
+        [Test]
+        public async System.Threading.Tasks.Task Can_mock_store_procedure_Async()
+        {
+            var holdExecFilter = OrmLiteConfig.DialectProvider.ExecFilter;
+            OrmLiteConfig.DialectProvider.ExecFilter = new MockStoredProcExecFilter();
+
+            using (var db = OpenDbConnection())
+            {
+                var person = await db.SqlScalarAsync<Person>("exec sp_name @firstName, @age",
+                    new { firstName = "aName", age = 1 });
 
                 Assert.That(person.FirstName, Is.EqualTo("Mocked"));
             }
@@ -108,6 +144,27 @@ namespace ServiceStack.OrmLite.Tests
             }
 
             OrmLiteConfig.StringFilter = null;
+        }
+
+        [Test]
+        public void Does_use_StringFilter_on_null_strings()
+        {
+            OrmLiteConfig.OnDbNullFilter = fieldDef => 
+                fieldDef.FieldType == typeof(string)
+                    ? "NULL"
+                    : null;
+
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<ModelWithIdAndName>();
+
+                db.Insert(new ModelWithIdAndName { Name = null });
+                var row = db.Select<ModelWithIdAndName>().First();
+
+                Assert.That(row.Name, Is.EqualTo("NULL"));
+            }
+
+            OrmLiteConfig.OnDbNullFilter = null;
         }
     }
 }

@@ -8,10 +8,10 @@ using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite.Tests
 {
-	[TestFixture]
-	public class OrmLiteDeleteTests
-		: OrmLiteTestBase
-	{
+    [TestFixture]
+    public class OrmLiteDeleteTests
+        : OrmLiteTestBase
+    {
         private IDbConnection db;
 
         [SetUp]
@@ -28,9 +28,28 @@ namespace ServiceStack.OrmLite.Tests
             db.Dispose();
         }
 
-		[Test]
-		public void Can_Delete_from_ModelWithFieldsOfDifferentTypes_table()
-		{
+        [Test]
+        public void Can_delete_all_rows()
+        {
+            var row1 = ModelWithFieldsOfDifferentTypes.Create(1);
+            var row2 = ModelWithFieldsOfDifferentTypes.Create(2);
+            var row3 = ModelWithFieldsOfDifferentTypes.Create(3);
+
+            db.Save(row1);
+            db.Save(row2);
+            db.Save(row3);
+
+            db.DeleteAll(new[] { row1, row3 });
+
+            var remaining = db.Select<ModelWithFieldsOfDifferentTypes>();
+
+            Assert.That(remaining.Count, Is.EqualTo(1));
+            Assert.That(remaining[0].Id, Is.EqualTo(row2.Id));
+        }
+
+        [Test]
+        public void Can_Delete_from_ModelWithFieldsOfDifferentTypes_table()
+        {
             var rowIds = new List<int>(new[] { 1, 2, 3 });
 
             for (var i = 0; i < rowIds.Count; i++)
@@ -48,9 +67,9 @@ namespace ServiceStack.OrmLite.Tests
             Assert.That(dbRowIds, Is.EquivalentTo(new[] { rowIds[0], rowIds[2] }));
         }
 
-		[Test]
-		public void Can_DeleteById_from_ModelWithFieldsOfDifferentTypes_table()
-		{
+        [Test]
+        public void Can_DeleteById_from_ModelWithFieldsOfDifferentTypes_table()
+        {
             var rowIds = new List<int>(new[] { 1, 2, 3 });
 
             for (var i = 0; i < rowIds.Count; i++)
@@ -64,9 +83,9 @@ namespace ServiceStack.OrmLite.Tests
             Assert.That(dbRowIds, Is.EquivalentTo(new[] { rowIds[0], rowIds[2] }));
         }
 
-		[Test]
-		public void Can_DeleteByIds_from_ModelWithFieldsOfDifferentTypes_table()
-		{
+        [Test]
+        public void Can_DeleteByIds_from_ModelWithFieldsOfDifferentTypes_table()
+        {
             db.DropAndCreateTable<ModelWithFieldsOfDifferentTypes>();
 
             var rowIds = new List<int>(new[] { 1, 2, 3 });
@@ -81,7 +100,7 @@ namespace ServiceStack.OrmLite.Tests
 
             Assert.That(dbRowIds, Is.EquivalentTo(new[] { rowIds[1] }));
         }
-        
+
         [Test]
         public void Can_delete_ModelWithFieldsOfDifferentTypes_table_with_filter()
         {
@@ -89,35 +108,7 @@ namespace ServiceStack.OrmLite.Tests
 
             db.Insert(row);
 
-            db.Delete<ModelWithFieldsOfDifferentTypes>(x => x.LongId <= row.LongId);
-
-            var dbRow = db.SingleById<ModelWithFieldsOfDifferentTypes>(row.Id);
-
-            Assert.That(dbRow, Is.Null);
-        }
-
-        [Test]
-        public void Can_delete_with_optional_string_params()
-        {
-            var row = ModelWithFieldsOfDifferentTypes.Create(1);
-
-            db.Insert(row);
-
-            db.DeleteFmt<ModelWithFieldsOfDifferentTypes>(where: "LongId".SqlColumn() + " <= {0}".SqlFmt(row.LongId));
-
-            var dbRow = db.SingleById<ModelWithFieldsOfDifferentTypes>(row.Id);
-
-            Assert.That(dbRow, Is.Null);
-        }
-
-        [Test]
-        public void Can_delete_with_tableName_and_optional_string_params()
-        {
-            var row = ModelWithFieldsOfDifferentTypes.Create(1);
-
-            db.Insert(row);
-
-            db.DeleteFmt(table: "ModelWithFieldsOfDifferentTypes", where: "LongId".SqlColumn() + " <= {0}".SqlFmt(row.LongId));
+            db.Delete<ModelWithFieldsOfDifferentTypes>(x => x.Long <= row.Long);
 
             var dbRow = db.SingleById<ModelWithFieldsOfDifferentTypes>(row.Id);
 

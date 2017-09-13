@@ -61,13 +61,18 @@ namespace ServiceStack.OrmLite
                 var ret = filter(dbCmd);
                 return ret;
             }
+            catch (Exception ex)
+            {
+                OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, ex);
+                throw;
+            }
             finally
             {
                 DisposeCommand(dbCmd, dbConn);
             }
         }
 
-        public IDbCommand Exec(IDbConnection dbConn, Func<IDbCommand, IDbCommand> filter)
+        public virtual IDbCommand Exec(IDbConnection dbConn, Func<IDbCommand, IDbCommand> filter)
         {
             var dbCmd = CreateCommand(dbConn);
             var ret = filter(dbCmd);
@@ -85,6 +90,11 @@ namespace ServiceStack.OrmLite
             {
                 filter(dbCmd);
             }
+            catch (Exception ex)
+            {
+                OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, ex);
+                throw;
+            }
             finally
             {
                 DisposeCommand(dbCmd, dbConn);
@@ -95,15 +105,27 @@ namespace ServiceStack.OrmLite
         {
             var dbCmd = CreateCommand(dbConn);
 
-            return filter(dbCmd)
-                .Then(t =>
-                {
-                    DisposeCommand(dbCmd, dbConn);
-                    return t;
-                });
+            try
+            {
+                return filter(dbCmd)
+                    .ContinueWith(t =>
+                    {
+                        DisposeCommand(dbCmd, dbConn);
+
+                        if (t.IsFaulted)
+                            throw t.Exception.UnwrapIfSingleException();
+
+                        return t.Result;
+                    });
+            }
+            catch
+            {
+                DisposeCommand(dbCmd, dbConn);
+                throw;
+            }
         }
 
-        public Task<IDbCommand> Exec(IDbConnection dbConn, Func<IDbCommand, Task<IDbCommand>> filter)
+        public virtual Task<IDbCommand> Exec(IDbConnection dbConn, Func<IDbCommand, Task<IDbCommand>> filter)
         {
             var dbCmd = CreateCommand(dbConn);
 

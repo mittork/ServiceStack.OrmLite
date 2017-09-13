@@ -3,7 +3,9 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
+#if !NETSTANDARD1_3
 using System.Runtime.Remoting.Messaging;
+#endif
 using System.Threading;
 
 namespace ServiceStack.OrmLite
@@ -20,6 +22,10 @@ namespace ServiceStack.OrmLite
 
         [ThreadStatic]
         public static IDictionary ContextItems;
+
+#if NETSTANDARD1_3
+        AsyncLocal<IDictionary> localContextItems = new AsyncLocal<IDictionary>();
+#endif
 
         /// <summary>
         /// Gets a list of items for this context. 
@@ -40,6 +46,12 @@ namespace ServiceStack.OrmLite
 
         private IDictionary GetItems()
         {
+#if NETSTANDARD1_3
+            if (UseThreadStatic)
+                return ContextItems;
+
+            return localContextItems.Value;
+#else
             try
             {
                 if (UseThreadStatic)
@@ -52,10 +64,21 @@ namespace ServiceStack.OrmLite
                 //Fixed in Mono master: https://github.com/mono/mono/pull/817
                 return CallContext.GetData(_key) as IDictionary;
             }
+#endif
         }
 
         private IDictionary CreateItems(IDictionary items = null)
         {
+#if NETSTANDARD1_3
+                if (UseThreadStatic)
+                {
+                    ContextItems = items ?? (items = new Dictionary<object, object>());
+                }
+                else
+                {
+                    localContextItems.Value = items ?? (items = new ConcurrentDictionary<object, object>());
+                }
+#else                
             try
             {
                 if (UseThreadStatic)
@@ -72,7 +95,24 @@ namespace ServiceStack.OrmLite
                 //Fixed in Mono master: https://github.com/mono/mono/pull/817
                 CallContext.SetData(_key, items ?? (items = new ConcurrentDictionary<object, object>()));
             }
+#endif
             return items;
+        }
+
+        public void ClearItems()
+        {
+            if (UseThreadStatic)
+            {
+                ContextItems = new Dictionary<object, object>();
+            }
+            else
+            {
+#if NETSTANDARD1_3
+                localContextItems.Value = new ConcurrentDictionary<object, object>();                
+#else                
+                CallContext.FreeNamedDataSlot(_key);
+#endif
+            }
         }
 
         public T GetOrCreate<T>(Func<T> createFn)
@@ -104,7 +144,7 @@ namespace ServiceStack.OrmLite
 
         public static OrmLiteState GetOrCreateState()
         {
-            return (OrmLiteState as OrmLiteState)
+            return OrmLiteState
                 ?? CreateNewState();
         }
 
@@ -114,8 +154,8 @@ namespace ServiceStack.OrmLite
             {
                 if (Instance.Items.Contains("OrmLiteState"))
                     return Instance.Items["OrmLiteState"] as OrmLiteState;
-                else
-                    return null;
+
+                return null;
             }
             set
             {
@@ -129,9 +169,7 @@ namespace ServiceStack.OrmLite
             get
             {
                 var state = OrmLiteState;
-                return state != null
-                    ? state.TSTransaction
-                    : null;
+                return state?.TSTransaction;
             }
             set { GetOrCreateState().TSTransaction = value; }
         }
@@ -152,7 +190,7 @@ namespace ServiceStack.OrmLite
 
         public override string ToString()
         {
-            return "State Id: {0}".Fmt(Id);
+            return $"State Id: {Id}";
         }
     }
 }

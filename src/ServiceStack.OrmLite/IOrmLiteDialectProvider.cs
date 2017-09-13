@@ -4,7 +4,7 @@
 // Authors:
 //   Demis Bellot (demis.bellot@gmail.com)
 //
-// Copyright 2013 Service Stack LLC. All Rights Reserved.
+// Copyright 2013 ServiceStack, Inc. All Rights Reserved.
 //
 // Licensed under the same terms of ServiceStack.
 //
@@ -21,19 +21,37 @@ namespace ServiceStack.OrmLite
 {
     public interface IOrmLiteDialectProvider
     {
+        void RegisterConverter<T>(IOrmLiteConverter converter);
+
         IOrmLiteExecFilter ExecFilter { get; set; }
 
-        int DefaultStringLength { get; set; }
+        /// <summary>
+        /// Gets the explicit Converter registered for a specific type
+        /// </summary>
+        IOrmLiteConverter GetConverter(Type type);
+
+        /// <summary>
+        /// Return best matching converter, falling back to Enum, Value or Ref Type Converters
+        /// </summary>
+        IOrmLiteConverter GetConverterBestMatch(Type type);
+
+        IOrmLiteConverter GetConverterBestMatch(FieldDefinition fieldDef);
 
         string ParamString { get; set; }
 
+        [Obsolete("Use GetStringConverter().UseUnicode")]
         bool UseUnicode { get; set; }
+
+        [Obsolete("Use GetStringConverter().StringLength")]
+        int DefaultStringLength { get; set; }
 
         string EscapeWildcards(string value);
 
         INamingStrategy NamingStrategy { get; set; }
 
         IStringSerializer StringSerializer { get; set; }
+
+        Func<string, string> ParamNameFilter { get; set; }
 
         /// <summary>
         /// Quote the string so that it can be used inside an SQL-expression
@@ -43,13 +61,25 @@ namespace ServiceStack.OrmLite
         /// <returns></returns>
         string GetQuotedValue(string paramValue);
 
-        void SetDbValue(FieldDefinition fieldDef, IDataReader reader, int colIndex, object instance);
-
-        object ConvertDbValue(object value, Type type);
-
         string GetQuotedValue(object value, Type fieldType);
 
+        string GetDefaultValue(Type tableType, string fieldName);
+
+        object GetParamValue(object value, Type fieldType);
+
+        object ToDbValue(object value, Type type);
+
+        object FromDbValue(object value, Type type);
+
+        object GetValue(IDataReader reader, int columnIndex, Type type);
+
+        int GetValues(IDataReader reader, object[] values);
+
         IDbConnection CreateConnection(string filePath, Dictionary<string, string> options);
+
+        string GetTableName(ModelDefinition modelDef);
+
+        string GetTableName(string tableName, string schema = null);
 
         string GetQuotedTableName(ModelDefinition modelDef);
 
@@ -61,24 +91,20 @@ namespace ServiceStack.OrmLite
 
         string SanitizeFieldNameForParamName(string fieldName);
 
-        string GetColumnDefinition(
-            string fieldName, Type fieldType, bool isPrimaryKey, bool autoIncrement,
-            bool isNullable, 
-            bool isRowVersion,
-            int? fieldLength,
-            int? scale, 
-            string defaultValue,
-            string customFieldDefinition);
+        string GetColumnDefinition(FieldDefinition fieldDef);
 
         long GetLastInsertId(IDbCommand command);
 
+        [Obsolete("Use GetLastInsertIdSqlSuffix()")]
         long InsertAndGetLastInsertId<T>(IDbCommand dbCmd);
+
+        string GetLastInsertIdSqlSuffix<T>();
 
         string ToSelectStatement(Type tableType, string sqlFilter, params object[] filterParams);
 
         string ToSelectStatement(ModelDefinition modelDef, string selectExpression, string bodyExpression, string orderByExpression = null, int? offset = null, int? rows = null);
 
-        string ToInsertRowStatement(IDbCommand command, object objWithProperties, ICollection<string> InsertFields = null);
+        string ToInsertRowStatement(IDbCommand cmd, object objWithProperties, ICollection<string> InsertFields = null);
 
         void PrepareParameterizedInsertStatement<T>(IDbCommand cmd, ICollection<string> insertFields = null);
 
@@ -90,13 +116,21 @@ namespace ServiceStack.OrmLite
 
         void SetParameterValues<T>(IDbCommand dbCmd, object obj);
 
+        void SetParameter(FieldDefinition fieldDef, IDbDataParameter p);
+
         Dictionary<string, FieldDefinition> GetFieldDefinitionMap(ModelDefinition modelDef);
 
         object GetFieldValue(FieldDefinition fieldDef, object value);
+        object GetFieldValue(Type fieldType, object value);
 
-        string ToUpdateRowStatement(object objWithProperties, ICollection<string> UpdateFields = null);
+        void PrepareUpdateRowStatement(IDbCommand dbCmd, object objWithProperties, ICollection<string> UpdateFields = null);
 
-        string ToDeleteRowStatement(object objWithProperties);
+        void PrepareUpdateRowStatement<T>(IDbCommand dbCmd, Dictionary<string, object> args, string sqlFilter);
+
+        void PrepareUpdateRowAddStatement<T>(IDbCommand dbCmd, Dictionary<string, object> args, string sqlFilter);
+
+        void PrepareInsertRowStatement<T>(IDbCommand dbCmd, Dictionary<string, object> args);
+
         string ToDeleteStatement(Type tableType, string sqlFilter, params object[] filterParams);
 
         IDbCommand CreateParameterizedDeleteStatement(IDbConnection connection, object objWithProperties);
@@ -125,16 +159,25 @@ namespace ServiceStack.OrmLite
 
         bool DoesTableExist(IDbConnection db, string tableName, string schema = null);
         bool DoesTableExist(IDbCommand dbCmd, string tableName, string schema = null);
-
+        bool DoesColumnExist(IDbConnection db, string columnName, string tableName, string schema = null);
         bool DoesSequenceExist(IDbCommand dbCmd, string sequencName);
 
-        string GetRowVersionColumnName(FieldDefinition field);
+        void DropColumn(IDbConnection db, Type modelType, string columnName);
+
+        ulong FromDbRowVersion(object value);
+        SelectItem GetRowVersionColumnName(FieldDefinition field, string tablePrefix = null);
+
         string GetColumnNames(ModelDefinition modelDef);
+        SelectItem[] GetColumnNames(ModelDefinition modelDef, bool tableQualified);
 
         SqlExpression<T> SqlExpression<T>();
 
-        DbType GetColumnDbType(Type valueType);
-        string GetColumnTypeDefinition(Type fieldType);
+        [Obsolete("Use InitDbParam")]
+        DbType GetColumnDbType(Type columnType);
+
+        IDbDataParameter CreateParam();
+
+        void InitDbParam(IDbDataParameter dbParam, Type columnType);
 
         //DDL
         string GetDropForeignKeyConstraints(ModelDefinition modelDef);
@@ -164,5 +207,15 @@ namespace ServiceStack.OrmLite
     
         string GetLoadChildrenSubSelect<From>(SqlExpression<From> expr);
         string ToRowCountStatement(string innerSql);
+
+        string ToUpdateStatement<T>(IDbCommand dbCmd, T item, ICollection<string> updateFields = null);
+        string ToInsertStatement<T>(IDbCommand dbCmd, T item, ICollection<string> insertFields = null);
+        string MergeParamsIntoSql(string sql, IEnumerable<IDbDataParameter> dbParams);
+
+        string SqlConcat(IEnumerable<object> args);
+        string SqlCurrency(string fieldOrValue);
+        string SqlCurrency(string fieldOrValue, string currencySymbol);
+        string SqlBool(bool value);
+        string SqlLimit(int? offset = null, int? rows = null);
     }
 }

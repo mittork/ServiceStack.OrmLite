@@ -12,7 +12,7 @@ namespace ServiceStack.OrmLite.Support
     internal abstract class LoadList<Into, From>
     {
         protected IDbCommand dbCmd;
-        protected SqlExpression<From> expr;
+        protected SqlExpression<From> q;
 
         protected IOrmLiteDialectProvider dialectProvider;
         protected List<Into> parentResults;
@@ -20,42 +20,35 @@ namespace ServiceStack.OrmLite.Support
         protected List<FieldDefinition> fieldDefs;
         protected string subSql;
 
-        public List<FieldDefinition> FieldDefs
-        {
-            get { return fieldDefs; }
-        }
+        public List<FieldDefinition> FieldDefs => fieldDefs;
 
-        public List<Into> ParentResults
-        {
-            get { return parentResults; }
-        }
+        public List<Into> ParentResults => parentResults;
 
-        protected LoadList(IDbCommand dbCmd, SqlExpression<From> expr)
+        protected LoadList(IDbCommand dbCmd, SqlExpression<From> q)
         {
             dialectProvider = dbCmd.GetDialectProvider();
 
-            if (expr == null)
-                expr = dialectProvider.SqlExpression<From>();
+            if (q == null)
+                q = dialectProvider.SqlExpression<From>();
 
             this.dbCmd = dbCmd;
-            this.expr = expr;
+            this.q = q;
 
-            var sql = expr.SelectInto<Into>();
-            parentResults = dbCmd.ExprConvertToList<Into>(sql);
+            var sql = q.SelectInto<Into>();
+            parentResults = dbCmd.ExprConvertToList<Into>(sql, q.Params, onlyFields:q.OnlyFields);
 
             modelDef = ModelDefinition<Into>.Definition;
             fieldDefs = modelDef.AllFieldDefinitionsArray.Where(x => x.IsReference).ToList();
 
-            subSql = dialectProvider.GetLoadChildrenSubSelect(expr);
+            subSql = dialectProvider.GetLoadChildrenSubSelect(q);
         }
 
         protected string GetRefListSql(ModelDefinition refModelDef, FieldDefinition refField)
         {
-            var sqlRef = "SELECT {0} FROM {1} WHERE {2} IN ({3})".Fmt(
-                dialectProvider.GetColumnNames(refModelDef),
-                dialectProvider.GetQuotedTableName(refModelDef),
-                dialectProvider.GetQuotedColumnName(refField),
-                subSql);
+            var sqlRef = $"SELECT {dialectProvider.GetColumnNames(refModelDef)} " +
+                         $"FROM {dialectProvider.GetQuotedTableName(refModelDef)} " +
+                         $"WHERE {dialectProvider.GetQuotedColumnName(refField)} " +
+                         $"IN ({subSql})";
 
             return sqlRef;
         }
@@ -90,32 +83,61 @@ namespace ServiceStack.OrmLite.Support
         protected string GetRefSelfSql(ModelDefinition modelDef, FieldDefinition refSelf, ModelDefinition refModelDef)
         {
             //Load Self Table.RefTableId PK
-            expr.Select(dialectProvider.GetQuotedColumnName(modelDef, refSelf));
+            q.Select(dialectProvider.GetQuotedColumnName(modelDef, refSelf));
 
-            var subSqlRef = expr.ToSelectStatement();
+            var subSqlRef = q.ToSelectStatement();
 
-            var sqlRef = "SELECT {0} FROM {1} WHERE {2} IN ({3})".Fmt(
-                dialectProvider.GetColumnNames(refModelDef),
-                dialectProvider.GetQuotedTableName(refModelDef),
-                dialectProvider.GetQuotedColumnName(refModelDef.PrimaryKey),
-                subSqlRef);
+            var sqlRef = $"SELECT {dialectProvider.GetColumnNames(refModelDef)} " +
+                         $"FROM {dialectProvider.GetQuotedTableName(refModelDef)} " +
+                         $"WHERE {dialectProvider.GetQuotedColumnName(refModelDef.PrimaryKey)} " +
+                         $"IN ({subSqlRef})";
 
             return sqlRef;
         }
 
         protected string GetRefFieldSql(ModelDefinition refModelDef, FieldDefinition refField)
         {
-            var sqlRef = "SELECT {0} FROM {1} WHERE {2} IN ({3})".Fmt(
-                dialectProvider.GetColumnNames(refModelDef),
-                dialectProvider.GetQuotedTableName(refModelDef),
-                dialectProvider.GetQuotedColumnName(refField),
-                subSql);
+            var sqlRef = $"SELECT {dialectProvider.GetColumnNames(refModelDef)} " +
+                         $"FROM {dialectProvider.GetQuotedTableName(refModelDef)} " +
+                         $"WHERE {dialectProvider.GetQuotedColumnName(refField)} " +
+                         $"IN ({subSql})";
             return sqlRef;
+        }
+
+        protected Dictionary<object, object> CreateRefMap()
+        {
+            return OrmLiteConfig.IsCaseInsensitive
+                ? new Dictionary<object, object>(CaseInsensitiveObjectComparer.Instance)
+                : new Dictionary<object, object>(); 
+        }
+
+        public class CaseInsensitiveObjectComparer : IEqualityComparer<object>
+        {
+            public static CaseInsensitiveObjectComparer Instance = new CaseInsensitiveObjectComparer();
+
+            public bool Equals(object x, object y)
+            {
+                if (x == null && y == null) return true;
+                if (x == null || y == null) return false;
+
+                var xStr = x as string;
+                var yStr = y as string;
+
+                return xStr != null && yStr != null
+                    ? xStr.Equals(yStr, StringComparison.OrdinalIgnoreCase)
+                    : x.Equals(y);
+            }
+
+            public int GetHashCode(object obj)
+            {
+                var str = obj as string;
+                return str?.ToUpper().GetHashCode() ?? obj.GetHashCode();
+            }
         }
 
         protected void SetRefSelfChildResults(FieldDefinition fieldDef, ModelDefinition refModelDef, FieldDefinition refSelf, IList childResults)
         {
-            var map = new Dictionary<object, object>();
+            var map = CreateRefMap();
 
             foreach (var result in childResults)
             {
@@ -136,7 +158,7 @@ namespace ServiceStack.OrmLite.Support
 
         protected void SetRefFieldChildResults(FieldDefinition fieldDef, FieldDefinition refField, IList childResults)
         {
-            var map = new Dictionary<object, object>();
+            var map = CreateRefMap();
 
             foreach (var result in childResults)
             {
@@ -158,7 +180,7 @@ namespace ServiceStack.OrmLite.Support
 
     internal class LoadListSync<Into, From> : LoadList<Into, From>
     {
-        public LoadListSync(IDbCommand dbCmd, SqlExpression<From> expr) : base(dbCmd, expr) {}
+        public LoadListSync(IDbCommand dbCmd, SqlExpression<From> q) : base(dbCmd, q) {}
 
         public void SetRefFieldList(FieldDefinition fieldDef, Type refType)
         {
@@ -196,7 +218,7 @@ namespace ServiceStack.OrmLite.Support
         }
     }
 
-#if NET45
+#if ASYNC
     internal class LoadListAsync<Into, From> : LoadList<Into, From>
     {
         public LoadListAsync(IDbCommand dbCmd, SqlExpression<From> expr) : base(dbCmd, expr) { }

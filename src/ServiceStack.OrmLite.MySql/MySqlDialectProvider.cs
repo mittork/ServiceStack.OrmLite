@@ -6,7 +6,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using MySql.Data.MySqlClient;
 using ServiceStack.Data;
+using ServiceStack.OrmLite.Converters;
+using ServiceStack.OrmLite.MySql.Converters;
 using ServiceStack.OrmLite.MySql.DataAnnotations;
+using ServiceStack.OrmLite.Support;
 using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite.MySql
@@ -20,27 +23,40 @@ namespace ServiceStack.OrmLite.MySql
         public MySqlDialectProvider()
         {
             base.AutoIncrementDefinition = "AUTO_INCREMENT";
-            base.IntColumnDefinition = "int(11)";
-            base.BoolColumnDefinition = "tinyint(1)";
-            base.DecimalColumnDefinition = "decimal(38,6)";
-            base.GuidColumnDefinition = "char(36)";
-            base.DefaultStringLength = 255;
-            base.MaxStringColumnDefinition = "TEXT";
-            base.InitColumnTypeMap();
-            base.DefaultValueFormat = " DEFAULT '{0}'";
+            base.DefaultValueFormat = " DEFAULT {0}";
             base.SelectIdentitySql = "SELECT LAST_INSERT_ID()";
-        }
 
-        public override void OnAfterInitColumnTypeMap()
-        {
-            DbTypeMap.Set<Guid>(DbType.String, GuidColumnDefinition);
-            DbTypeMap.Set<Guid?>(DbType.String, GuidColumnDefinition);
-            DbTypeMap.Set<DateTimeOffset>(DbType.DateTimeOffset, StringColumnDefinition);
-            DbTypeMap.Set<DateTimeOffset?>(DbType.DateTimeOffset, StringColumnDefinition);
+            base.InitColumnTypeMap();
+
+            base.RegisterConverter<string>(new MySqlStringConverter());
+            base.RegisterConverter<char[]>(new MySqlCharArrayConverter());
+            base.RegisterConverter<bool>(new MySqlBoolConverter());
+
+            base.RegisterConverter<byte>(new MySqlByteConverter());
+            base.RegisterConverter<sbyte>(new MySqlSByteConverter());
+            base.RegisterConverter<short>(new MySqlInt16Converter());
+            base.RegisterConverter<ushort>(new MySqlUInt16Converter());
+            base.RegisterConverter<int>(new MySqlInt32Converter());
+            base.RegisterConverter<uint>(new MySqlUInt32Converter());
+
+            base.RegisterConverter<decimal>(new MySqlDecimalConverter());
+
+            base.RegisterConverter<Guid>(new MySqlGuidConverter());
+            base.RegisterConverter<DateTime>(new MySqlDateTimeConverter());
+            base.RegisterConverter<DateTimeOffset>(new MySqlDateTimeOffsetConverter());
+
+            this.Variables = new Dictionary<string, string>
+            {
+                { OrmLiteVariables.SystemUtc, "CURRENT_TIMESTAMP" },
+            };
         }
 
         public static string RowVersionTriggerFormat = "{0}RowVersionUpdateTrigger";
 
+        public override string GetLoadChildrenSubSelect<From>(SqlExpression<From> expr)
+        {
+            return $"SELECT * FROM ({base.GetLoadChildrenSubSelect(expr)}) AS SubQuery";
+        }
         public override string ToPostDropTableStatement(ModelDefinition modelDef)
         {
             if (modelDef.RowVersion != null)
@@ -48,8 +64,6 @@ namespace ServiceStack.OrmLite.MySql
                 var triggerName = RowVersionTriggerFormat.Fmt(GetTableName(modelDef));
                 return "DROP TRIGGER IF EXISTS {0}".Fmt(GetQuotedName(triggerName));
             }
-
-
             return null;
         }
 
@@ -84,43 +98,10 @@ namespace ServiceStack.OrmLite.MySql
         {
             if (value == null) return "NULL";
 
-            if (fieldType == typeof(DateTime))
-            {
-                var dateValue = (DateTime)value;
-                /*
-                 * ms not contained in format. MySql ignores ms part anyway
-                 * 
-                 * for more details see: http://dev.mysql.com/doc/refman/5.1/en/datetime.html
-                 */
-                const string dateTimeFormat = "yyyy-MM-dd HH:mm:ss";
-
-                return base.GetQuotedValue(dateValue.ToString(dateTimeFormat), typeof(string));
-            }
-
             if (fieldType == typeof(byte[]))
-            {
                 return "0x" + BitConverter.ToString((byte[])value).Replace("-", "");
-            }
 
             return base.GetQuotedValue(value, fieldType);
-        }
-
-        public override object ConvertDbValue(object value, Type type)
-        {
-            if (value == null || value is DBNull) return null;
-
-            if (type == typeof(bool))
-            {
-                return
-                    value is bool
-                        ? value
-                        : (int.Parse(value.ToString()) != 0); //backward compatibility (prev version mapped bool as bit(1))
-            }
-
-            if (type == typeof(byte[]))
-                return value;
-
-            return base.ConvertDbValue(value, type);
         }
 
         public override string GetTableName(string table, string schema = null)
@@ -147,33 +128,50 @@ namespace ServiceStack.OrmLite.MySql
             return new MySqlExpression<T>(this);
         }
 
+        public override IDbDataParameter CreateParam()
+        {
+            return new MySqlParameter();
+        }
+
         public override bool DoesTableExist(IDbCommand dbCmd, string tableName, string schema = null)
         {
-            //Same as SQL Server apparently?
-            var sql = ("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES " +
-                "WHERE TABLE_NAME = {0} AND " +
-                "TABLE_SCHEMA = {1}")
+            var sql = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = {0} AND TABLE_SCHEMA = {1}"
                 .SqlFmt(GetTableName(tableName, schema), dbCmd.Connection.Database);
 
-            dbCmd.CommandText = sql;
-            var result = dbCmd.LongScalar();
+            var result = dbCmd.ExecLongScalar(sql);
+
+            return result > 0;
+        }
+
+        public override bool DoesColumnExist(IDbConnection db, string columnName, string tableName, string schema = null)
+        {
+            tableName = GetTableName(tableName, schema);
+            var sql = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS" 
+                    + " WHERE TABLE_NAME = @tableName AND COLUMN_NAME = @columnName AND TABLE_SCHEMA = @schema"
+                .SqlFmt(tableName, columnName);
+
+            var result = db.SqlScalar<long>(sql, new { tableName, columnName, schema = db.Database });
 
             return result > 0;
         }
 
         public override string ToCreateTableStatement(Type tableType)
         {
-            var sbColumns = new StringBuilder();
-            var sbConstraints = new StringBuilder();
+            var sbColumns = StringBuilderCache.Allocate();
+            var sbConstraints = StringBuilderCache.Allocate();
 
             var modelDef = GetModel(tableType);
             foreach (var fieldDef in modelDef.FieldDefinitions)
             {
+                if (fieldDef.CustomSelect != null)
+                    continue;
+
                 if (sbColumns.Length != 0) sbColumns.Append(", \n  ");
 
                 sbColumns.Append(GetColumnDefinition(fieldDef));
 
-                if (fieldDef.ForeignKey == null) continue;
+                if (fieldDef.ForeignKey == null || OrmLiteConfig.SkipForeignKeys)
+                    continue;
 
                 var refModelDef = GetModel(fieldDef.ForeignKey.ReferenceType);
                 sbConstraints.AppendFormat(
@@ -189,42 +187,33 @@ namespace ServiceStack.OrmLite.MySql
                 if (!string.IsNullOrEmpty(fieldDef.ForeignKey.OnUpdate))
                     sbConstraints.AppendFormat(" ON UPDATE {0}", fieldDef.ForeignKey.OnUpdate);
             }
-            var sql = new StringBuilder(string.Format(
-                "CREATE TABLE {0} \n(\n  {1}{2} \n); \n", GetQuotedTableName(modelDef), sbColumns, sbConstraints));
+            var sql = string.Format(
+                "CREATE TABLE {0} \n(\n  {1}{2} \n); \n", GetQuotedTableName(modelDef), 
+                StringBuilderCache.ReturnAndFree(sbColumns), 
+                StringBuilderCacheAlt.ReturnAndFree(sbConstraints));
 
-            return sql.ToString();
+            return sql;
         }
 
         public string GetColumnDefinition(FieldDefinition fieldDef)
         {
             if (fieldDef.PropertyInfo.FirstAttribute<TextAttribute>() != null)
             {
-                var sql = new StringBuilder();
+                var sql = StringBuilderCache.Allocate();
                 sql.AppendFormat("{0} {1}", GetQuotedColumnName(fieldDef.FieldName), TextColumnDefinition);
                 sql.Append(fieldDef.IsNullable ? " NULL" : " NOT NULL");
-                return sql.ToString();
+                return StringBuilderCache.ReturnAndFree(sql);
             }
 
-            var ret = base.GetColumnDefinition(
-                fieldDef.FieldName,
-                fieldDef.ColumnType,
-                fieldDef.IsPrimaryKey,
-                fieldDef.AutoIncrement,
-                fieldDef.IsNullable,
-                fieldDef.IsRowVersion,
-                fieldDef.FieldLength,
-                null,
-                fieldDef.DefaultValue,
-                fieldDef.CustomFieldDefinition);
-
+            var ret = base.GetColumnDefinition(fieldDef);
             if (fieldDef.IsRowVersion)
                 return ret + " DEFAULT 1";
 
-            if (fieldDef.ColumnType == typeof(Decimal))
-                return base.ReplaceDecimalColumnDefinition(ret, fieldDef.FieldLength, fieldDef.Scale);
-
             return ret;
         }
+
+        public override string SqlCurrency(string fieldOrValue, string currencySymbol) => 
+            SqlConcat(new []{ "'" + currencySymbol + "'", "cast(" + fieldOrValue + " as decimal(15,2))" });
 
         protected MySqlConnection Unwrap(IDbConnection db)
         {
@@ -241,33 +230,33 @@ namespace ServiceStack.OrmLite.MySql
             return (MySqlDataReader)reader;
         }
 
-#if NET45
-        public override Task OpenAsync(IDbConnection db, CancellationToken token)
+#if ASYNC
+        public override Task OpenAsync(IDbConnection db, CancellationToken token = default(CancellationToken))
         {
             return Unwrap(db).OpenAsync(token);
         }
 
-        public override Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token)
+        public override Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
         {
             return Unwrap(cmd).ExecuteReaderAsync(token).Then(x => (IDataReader)x);
         }
 
-        public override Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token)
+        public override Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
         {
             return Unwrap(cmd).ExecuteNonQueryAsync(token);
         }
 
-        public override Task<object> ExecuteScalarAsync(IDbCommand cmd, CancellationToken token)
+        public override Task<object> ExecuteScalarAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
         {
             return Unwrap(cmd).ExecuteScalarAsync(token);
         }
 
-        public override Task<bool> ReadAsync(IDataReader reader, CancellationToken token)
+        public override Task<bool> ReadAsync(IDataReader reader, CancellationToken token = default(CancellationToken))
         {
             return Unwrap(reader).ReadAsync(token);
         }
 
-        public override async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token)
+        public override async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
         {
             try
             {
@@ -285,7 +274,7 @@ namespace ServiceStack.OrmLite.MySql
             }
         }
 
-        public override async Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token)
+        public override async Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token = default(CancellationToken))
         {
             try
             {
@@ -301,7 +290,7 @@ namespace ServiceStack.OrmLite.MySql
             }
         }
 
-        public override async Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token)
+        public override async Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
         {
             try
             {

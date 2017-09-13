@@ -6,27 +6,25 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using ServiceStack.DataAnnotations;
+using ServiceStack.OrmLite.VistaDB.Converters;
+using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite.VistaDB
 {
     public class VistaDbDialectProvider : ReflectionBasedDialectProvider<VistaDbDialectProvider>
     {
-        const string dateTimeFormat = "yyyy-MM-dd HH:mm:ss.fff";
-
         public static VistaDbDialectProvider Instance = new VistaDbDialectProvider();
-
-        private static DateTime timeSpanOffset = new DateTime(1900, 01, 01);
 
         protected override AssemblyName DefaultAssemblyGacName
         {
-            get { return new AssemblyName("VistaDB.5.NET40, Version=5.0.0.0, Culture=neutral, PublicKeyToken=dfc935afe2125461"); }
+            get { return new AssemblyName("VistaDB.5.NET40, Version=5.1.0.0, Culture=neutral, PublicKeyToken=dfc935afe2125461"); }
         }
 
         protected override AssemblyName DefaultAssemblyLocalName { get { return new AssemblyName("VistaDB.5.NET40"); } }
 
         protected override string DefaultProviderTypeName { get { return "VistaDB.Provider.VistaDBConnection"; } }
 
-        public string RowVersionTriggerFormat { get; set; } 
+        public string RowVersionTriggerFormat { get; set; }
 
         public VistaDbDialectProvider()
         {
@@ -34,27 +32,45 @@ namespace ServiceStack.OrmLite.VistaDB
 
             base.AutoIncrementDefinition = "IDENTITY(1,1)";
             base.SelectIdentitySql = "SELECT @@IDENTITY";
-            base.GuidColumnDefinition = "UniqueIdentifier";
-            base.RealColumnDefinition = "FLOAT";
-            base.BoolColumnDefinition = "BIT";
-            base.BlobColumnDefinition = "VARBINARY(MAX)";
-            base.IntColumnDefinition = "INT";
             base.DefaultValueFormat = " DEFAULT {0}";
-            base.TimeColumnDefinition = "BIGINT"; //TIME"; //SQLSERVER 2008+
-            base.MaxStringColumnDefinition = "VARCHAR(MAX)";
 
-            base.InitColumnTypeMap();           
-        }
+            base.InitColumnTypeMap();
 
-        public override void OnAfterInitColumnTypeMap()
-        {
-            DbTypeMap.Set<TimeSpan>(DbType.DateTime, TimeColumnDefinition);
-            DbTypeMap.Set<TimeSpan?>(DbType.DateTime, TimeColumnDefinition);
+            base.RegisterConverter<string>(new VistaDbStringConverter());
+            base.RegisterConverter<bool>(new VistaDbBoolConverter());
+            base.RegisterConverter<byte[]>(new VistaDbByteArrayConverter());
+
+            base.RegisterConverter<float>(new VistaDbFloatConverter());
+            base.RegisterConverter<double>(new VistaDbDoubleConverter());
+            base.RegisterConverter<decimal>(new VistaDbDecimalConverter());
+
+            base.RegisterConverter<byte>(new VistaDbByteConverter());
+            base.RegisterConverter<sbyte>(new VistaDbSByteConverter());
+            base.RegisterConverter<short>(new VistaDbInt16Converter());
+            base.RegisterConverter<ushort>(new VistaDbUInt16Converter());
+            base.RegisterConverter<int>(new VistaDbInt32Converter());
+            base.RegisterConverter<uint>(new VistaDbUInt32Converter());
+            base.RegisterConverter<uint>(new VistaDbUInt32Converter());
+
+            base.RegisterConverter<byte>(new VistaDbByteConverter());
+            base.RegisterConverter<sbyte>(new VistaDbSByteConverter());
+            base.RegisterConverter<short>(new VistaDbInt16Converter());
+            base.RegisterConverter<ushort>(new VistaDbUInt16Converter());
+            base.RegisterConverter<int>(new VistaDbInt32Converter());
+            base.RegisterConverter<uint>(new VistaDbUInt32Converter());
+
+            base.RegisterConverter<TimeSpan>(new VistaDbTimeSpanAsIntConverter());
+            base.RegisterConverter<Guid>(new VistaDbGuidConverter());
+
+            this.Variables = new Dictionary<string, string>
+            {
+                { OrmLiteVariables.SystemUtc, "GetDate()" },
+            };
         }
 
         public override string GetQuotedValue(string paramValue)
         {
-            return (this.UseUnicode ? "N'" : "'") + paramValue.Replace("'", "''") + "'";
+            return (this.StringConverter.UseUnicode ? "N'" : "'") + paramValue.Replace("'", "''") + "'";
         }
 
         public override void SetParameterValues<T>(IDbCommand dbCmd, object obj)
@@ -101,102 +117,83 @@ namespace ServiceStack.OrmLite.VistaDB
             var modelDefinition = OrmLiteUtils.GetModelDefinition(tableType);
             var quotedTableName = this.GetQuotedTableName(modelDefinition);
 
-            var columns = new StringBuilder();
-            var constraints = new StringBuilder();
+            var columns = StringBuilderCache.Allocate();
+            var constraints = StringBuilderCacheAlt.Allocate();
 
-            foreach (var fd in modelDefinition.FieldDefinitions)
+            foreach (var fieldDef in modelDefinition.FieldDefinitions)
             {
                 if (columns.Length != 0)
                     columns.Append(", \n  ");
-                
-                var columnDefinition = this.GetColumnDefinition(
-                    fd.FieldName, 
-                    fd.FieldType, 
-                    false, 
-                    fd.AutoIncrement, 
-                    fd.IsNullable,
-                    fd.IsRowVersion,
-                    fd.FieldLength, 
-                    null, 
-                    fd.DefaultValue, 
-                    fd.CustomFieldDefinition);
-                
+
+                var columnDefinition = this.GetColumnDefinition(fieldDef.Clone(f => f.IsPrimaryKey = false));
                 columns.Append(columnDefinition);
 
-                if (fd.IsPrimaryKey)
+                if (fieldDef.IsPrimaryKey)
                 {
                     constraints.AppendFormat("ALTER TABLE {0} ADD CONSTRAINT {1} PRIMARY KEY ({2});\n",
                         quotedTableName,
                         this.GetQuotedName("PK_" + modelDefinition.ModelName),
-                        this.GetQuotedColumnName(fd.FieldName));
+                        this.GetQuotedColumnName(fieldDef.FieldName));
                 }
-                else if (fd.ForeignKey != null)
-                {
-                    var foreignModelDefinition = OrmLiteUtils.GetModelDefinition(fd.ForeignKey.ReferenceType);
-                    constraints.AppendFormat("ALTER TABLE {0} ADD CONSTRAINT {1} FOREIGN KEY ({2}) REFERENCES {3} ({4}){5}{6};\n",
-                        quotedTableName,
-				        this.GetQuotedName(fd.ForeignKey.GetForeignKeyName(modelDefinition, foreignModelDefinition, this.NamingStrategy, fd)),
-				        this.GetQuotedColumnName(fd.FieldName),
-				        this.GetQuotedTableName(foreignModelDefinition),
-				        this.GetQuotedColumnName(foreignModelDefinition.PrimaryKey.FieldName),
-                        this.GetForeignKeyOnDeleteClause(fd.ForeignKey),
-                        this.GetForeignKeyOnUpdateClause(fd.ForeignKey));
-                }
+
+                if (fieldDef.ForeignKey == null || OrmLiteConfig.SkipForeignKeys)
+                    continue;
+
+                var foreignModelDefinition = OrmLiteUtils.GetModelDefinition(fieldDef.ForeignKey.ReferenceType);
+                constraints.AppendFormat("ALTER TABLE {0} ADD CONSTRAINT {1} FOREIGN KEY ({2}) REFERENCES {3} ({4}){5}{6};\n",
+                    quotedTableName,
+                    this.GetQuotedName(fieldDef.ForeignKey.GetForeignKeyName(modelDefinition, foreignModelDefinition, this.NamingStrategy, fieldDef)),
+                    this.GetQuotedColumnName(fieldDef.FieldName),
+                    this.GetQuotedTableName(foreignModelDefinition),
+                    this.GetQuotedColumnName(foreignModelDefinition.PrimaryKey.FieldName),
+                    this.GetForeignKeyOnDeleteClause(fieldDef.ForeignKey),
+                    this.GetForeignKeyOnUpdateClause(fieldDef.ForeignKey));
             }
 
-            return String.Format("CREATE TABLE {0} \n(\n  {1} \n); \n {2}\n",
-                quotedTableName, 
-                columns, 
-                constraints);
+            return string.Format("CREATE TABLE {0} \n(\n  {1} \n); \n {2}\n",
+                quotedTableName,
+                StringBuilderCache.ReturnAndFree(columns),
+                StringBuilderCacheAlt.ReturnAndFree(constraints));
         }
-        
-        public override string GetColumnDefinition(string fieldName, Type fieldType,
-            bool isPrimaryKey, bool autoIncrement, bool isNullable, bool isRowVersion,
-            int? fieldLength, int? scale, string defaultValue, string customFieldDefinition)
+
+        public override string GetColumnDefinition(FieldDefinition fieldDef)
         {
-            string fieldDefinition;
-            if (fieldType == typeof (string))
+            var fieldDefinition = fieldDef.CustomFieldDefinition 
+                ?? GetColumnTypeDefinition(fieldDef.FieldType, fieldDef.FieldLength, fieldDef.Scale);
+
+            var sql = StringBuilderCache.Allocate();
+            sql.AppendFormat("{0} {1}", this.GetQuotedColumnName(fieldDef.FieldName), fieldDefinition);
+            if (fieldDef.IsPrimaryKey)
             {
-                fieldDefinition = fieldLength == StringLengthAttribute.MaxText
-                    ? MaxStringColumnDefinition
-                    : string.Format(StringLengthColumnDefinitionFormat, fieldLength.GetValueOrDefault(DefaultStringLength));
-            }
-            else if (!this.DbTypeMap.ColumnTypeMap.TryGetValue(fieldType, out fieldDefinition))
-            {
-                fieldDefinition = this.GetUndefinedColumnDefinition(fieldType, fieldLength);
-            }
-            
-            var sql = new StringBuilder();
-            sql.AppendFormat("{0} {1}", this.GetQuotedColumnName(fieldName), fieldDefinition);
-            if (isPrimaryKey)
-            {
-                sql.Append(" PRIMARY KEY");                
+                sql.Append(" PRIMARY KEY");
             }
             else
             {
-                if (isNullable && !autoIncrement)
+                if (fieldDef.IsNullable && !fieldDef.AutoIncrement)
                     sql.Append(" NULL");
                 else
                     sql.Append(" NOT NULL");
             }
 
-            if (autoIncrement)
+            if (fieldDef.AutoIncrement)
                 sql.Append(" ").Append(this.AutoIncrementDefinition);
 
-            if (!String.IsNullOrEmpty(defaultValue))
+            var defaultValue = GetDefaultValue(fieldDef);
+            if (!string.IsNullOrEmpty(defaultValue))
                 sql.AppendFormat(this.DefaultValueFormat, defaultValue);
-            
-            return sql.ToString();
+
+            return StringBuilderCache.ReturnAndFree(sql);
         }
 
         public override string ToExistStatement(Type fromTableType, object objWithProperties, string sqlFilter, params object[] filterParams)
         {
             var fromModelDef = GetModel(fromTableType);
-           
-            var sql = new StringBuilder();
+
+            var sql = StringBuilderCache.Allocate();
             sql.AppendFormat("SELECT 1 \nFROM {0}", this.GetQuotedTableName(fromModelDef));
 
-            var filter = new StringBuilder();
+            var filter = StringBuilderCacheAlt.Allocate();
+            var hasFilter = false;
 
             if (objWithProperties != null)
             {
@@ -210,22 +207,22 @@ namespace ServiceStack.OrmLite.VistaDB
 
                     foreach (var def in modelDef.FieldDefinitions)
                     {
-                        if (def.IsPrimaryKey) 
+                        if (def.IsPrimaryKey)
                             fpk.Add(def);
                     }
 
                     foreach (var fieldDef in fromModelDef.FieldDefinitions)
                     {
-                        if (fieldDef.IsComputed || fieldDef.ForeignKey == null) 
+                        if (fieldDef.IsComputed || fieldDef.ForeignKey == null)
                             continue;
 
                         var model = GetModel(fieldDef.ForeignKey.ReferenceType);
                         if (model.ModelName != modelDef.ModelName)
                             continue;
-                         
-                        if (filter.Length > 0) 
+
+                        if (filter.Length > 0)
                             filter.Append(" AND ");
-                            
+
                         filter.AppendFormat("{0} = {1}", GetQuotedColumnName(fieldDef.FieldName), fpk[i++].GetQuotedValue(objWithProperties));
                     }
                 }
@@ -234,106 +231,86 @@ namespace ServiceStack.OrmLite.VistaDB
                     var modelDef = GetModel(tableType);
                     foreach (var fieldDef in modelDef.FieldDefinitions)
                     {
-                        if (fieldDef.IsComputed || !fieldDef.IsPrimaryKey) 
+                        if (fieldDef.IsComputed || !fieldDef.IsPrimaryKey)
                             continue;
-                        
-                        if (filter.Length > 0) 
+
+                        if (filter.Length > 0)
                             filter.Append(" AND ");
-                            
+
                         filter.AppendFormat("{0} = {1}",
                             GetQuotedColumnName(fieldDef.FieldName), fieldDef.GetQuotedValue(objWithProperties));
                     }
                 }
 
-                if (filter.Length > 0) 
-                    sql.AppendFormat("\nWHERE {0} ", filter);
+                hasFilter = filter.Length > 0;
+                if (hasFilter)
+                    sql.AppendFormat("\nWHERE {0} ", StringBuilderCacheAlt.ReturnAndFree(filter));
             }
 
             if (!string.IsNullOrEmpty(sqlFilter))
             {
-                sqlFilter = sqlFilter.SqlFmt(filterParams);                 
-                sql.Append(filter.Length > 0 ? " AND  " : "\nWHERE ");
+                sqlFilter = sqlFilter.SqlFmt(filterParams);
+                sql.Append(hasFilter ? " AND  " : "\nWHERE ");
                 sql.Append(sqlFilter);
             }
 
-            return String.Format("SELECT EXISTS({0});", sql);
-        }
-
-        public override object ConvertDbValue(object value, Type type)
-        {
-            if (value == null || value is DBNull)
-                return null;
-
-            if (type == typeof(bool) && !(value is bool))
-            {
-                var intVal = Convert.ToInt32(value.ToString());
-                return intVal != 0;
-            }
-            
-            if (type == typeof(TimeSpan) && value is DateTime)
-            {
-                var dateTimeValue = (DateTime)value;
-                return dateTimeValue - timeSpanOffset;
-            }
-
-            if (type == typeof(byte[]))
-                return value;
-
-            return base.ConvertDbValue(value, type);
+            return string.Format("SELECT EXISTS({0});", StringBuilderCache.ReturnAndFree(sql));
         }
 
         public override string GetQuotedValue(object value, Type fieldType)
         {
-            if (value == null) 
+            if (value == null)
                 return "NULL";
 
             if (fieldType == typeof(Guid))
                 return string.Format("CAST('{0}' AS UNIQUEIDENTIFIER)", (Guid)value);
 
-            if (fieldType == typeof(DateTime))
-            {
-                var dateValue = (DateTime)value;
-
-                return base.GetQuotedValue(dateValue.ToString(dateTimeFormat, CultureInfo.InvariantCulture), typeof(string));
-            }
-            if (fieldType == typeof(DateTimeOffset))
-            {
-                var dateValue = (DateTimeOffset)value;
-                
-                return base.GetQuotedValue(dateValue.ToString(dateTimeFormat, CultureInfo.InvariantCulture), typeof(string));
-            }
-
-            if (fieldType == typeof(bool))
-                return base.GetQuotedValue((bool)value ? 1 : 0, typeof(int));
-
-            if (fieldType == typeof(string))
-                return GetQuotedValue(value.ToString());
-
-            if (fieldType == typeof(byte[]))
-                return "0x" + BitConverter.ToString((byte[])value).Replace("-", "");
-
             return base.GetQuotedValue(value, fieldType);
         }
-                
+
         public override SqlExpression<T> SqlExpression<T>()
         {
             return new VistaDbExpression<T>(this);
         }
 
+        public override IDbDataParameter CreateParam()
+        {
+            return new OrmLiteVistaDbParameter(new OrmLiteDataParameter());
+        }
+
+        public override string GetTableName(string table, string schema = null)
+        {
+            return schema != null
+                ? string.Format("{0}_{1}",
+                    NamingStrategy.GetSchemaName(schema),
+                    NamingStrategy.GetTableName(table))
+                : NamingStrategy.GetTableName(table);
+        }
+
+        public override string GetQuotedTableName(ModelDefinition modelDef)
+        {
+            if (!modelDef.IsInSchema)
+                return GetQuotedName(NamingStrategy.GetTableName(modelDef.ModelName));
+
+            return GetQuotedName(GetTableName(modelDef.ModelName, modelDef.Schema));
+        }
+
         public override bool DoesTableExist(IDbCommand dbCmd, string tableName, string schema = null)
         {
+            var schemaTableName = GetTableName(tableName, schema);
             dbCmd.CommandText = "SELECT COUNT(*) FROM [database schema] WHERE typeid = 1 AND name = {0}"
-                .SqlFmt(tableName);
+                .SqlFmt(schemaTableName);
 
             return dbCmd.LongScalar() > 0;
         }
 
-        public override void UpdateStringColumnDefinitions()
+        public override bool DoesColumnExist(IDbConnection db, string columnName, string tableName, string schema = null)
         {
-            if (base.useUnicode && this.DefaultStringLength > 4000)
-                this.DefaultStringLength = 4000;
+            var table = GetTableName(tableName, schema);
+            var sql = "SELECT COUNT(*) FROM [database schema] WHERE typeid = 1 AND name = @columnName"
+                    + "   AND foreignReference = (SELECT objectId FROM [database schema] WHERE  typeid = 1 AND name = @table)";
 
-            base.UpdateStringColumnDefinitions();
+            return db.SqlScalar<long>(sql, new { table, columnName }) > 0;
         }
 
         public override string GetForeignKeyOnDeleteClause(ForeignKeyConstraint foreignKey)
@@ -352,7 +329,7 @@ namespace ServiceStack.OrmLite.VistaDB
 
         public override string GetDropForeignKeyConstraints(ModelDefinition modelDef)
         {
-            var sb = new StringBuilder();
+            var sb = StringBuilderCache.Allocate();
             foreach (var fieldDef in modelDef.FieldDefinitions)
             {
                 if (fieldDef.ForeignKey != null)
@@ -371,67 +348,36 @@ namespace ServiceStack.OrmLite.VistaDB
                 }
             }
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         public override string ToAddColumnStatement(Type modelType, FieldDefinition fieldDef)
         {
-            var column = GetColumnDefinition(
-                fieldDef.FieldName,
-                fieldDef.FieldType,
-                fieldDef.IsPrimaryKey,
-                fieldDef.AutoIncrement,
-                fieldDef.IsNullable,
-                fieldDef.IsRowVersion,
-                fieldDef.FieldLength,
-                fieldDef.Scale,
-                fieldDef.DefaultValue,
-                fieldDef.CustomFieldDefinition);
-
-            return string.Format("ALTER TABLE {0} ADD {1};",
-                GetQuotedTableName(GetModel(modelType).ModelName),
-                column);
+            var column = GetColumnDefinition(fieldDef);
+            return $"ALTER TABLE {GetQuotedTableName(GetModel(modelType).ModelName)} ADD {column};";
         }
 
         public override string ToAlterColumnStatement(Type modelType, FieldDefinition fieldDef)
         {
-            var column = GetColumnDefinition(
-                fieldDef.FieldName, 
-                fieldDef.FieldType, 
-                fieldDef.IsPrimaryKey, 
-                fieldDef.AutoIncrement, 
-                fieldDef.IsNullable,
-                fieldDef.IsRowVersion,
-                fieldDef.FieldLength,
-                fieldDef.Scale,
-                fieldDef.DefaultValue,
-                fieldDef.CustomFieldDefinition);
-
-            return string.Format("ALTER TABLE {0} ALTER COLUMN {1};",
-                GetQuotedTableName(GetModel(modelType).ModelName),
-                column);
+            var column = GetColumnDefinition(fieldDef);
+            return $"ALTER TABLE {GetQuotedTableName(GetModel(modelType).ModelName)} ALTER COLUMN {column};";
         }
 
         public override string ToChangeColumnNameStatement(Type modelType, FieldDefinition fieldDef, string oldColumnName)
         {
-            var objectName = string.Format("{0}.{1}",
-                NamingStrategy.GetTableName(GetModel(modelType).ModelName),
-                oldColumnName);
-
-            return string.Format("sp_rename ({0}, {1}, {2});",
-                GetQuotedValue(objectName),
-                GetQuotedValue(fieldDef.FieldName),
-                GetQuotedValue("COLUMN"));
+            var objectName = $"{NamingStrategy.GetTableName(GetModel(modelType).ModelName)}.{oldColumnName}";
+            return $"sp_rename ({GetQuotedValue(objectName)}, {GetQuotedValue(fieldDef.FieldName)}, {GetQuotedValue("COLUMN")});";
         }
 
         /// Limit/Offset paging logic needs to be implemented here:
         public override string ToSelectStatement(
             ModelDefinition modelDef, string selectExpression, string bodyExpression, string orderByExpression = null, int? offset = null, int? rows = null)
         {
-            var sb = new StringBuilder(selectExpression);
-            sb.Append(bodyExpression);
+            var sb = StringBuilderCache.Allocate()
+                .Append(selectExpression)
+                .Append(bodyExpression);
 
-            var hasOrderBy = !String.IsNullOrWhiteSpace(orderByExpression);
+            var hasOrderBy = !string.IsNullOrWhiteSpace(orderByExpression);
 
             var skip = offset.GetValueOrDefault();
             if ((skip > 0 || rows.HasValue) && !hasOrderBy)
@@ -440,7 +386,7 @@ namespace ServiceStack.OrmLite.VistaDB
                 //Ordering by the first column in select list
                 orderByExpression = "\nORDER BY 1";
             }
-            
+
             if (hasOrderBy)
                 sb.Append(orderByExpression);
 
@@ -455,12 +401,12 @@ namespace ServiceStack.OrmLite.VistaDB
                 sb.Append(this.GetPagingFetchExpression(rows.Value));
             }
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         protected virtual string GetPagingOffsetExpression(int rows)
         {
-            return String.Format("\nOFFSET {0} ROWS", rows);
+            return string.Format("\nOFFSET {0} ROWS", rows);
         }
 
         protected virtual string GetPagingFetchExpression(int rows)

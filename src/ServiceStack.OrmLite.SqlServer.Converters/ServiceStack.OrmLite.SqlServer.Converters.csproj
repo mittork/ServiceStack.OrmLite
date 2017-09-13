@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net45</TargetFrameworks>
+    <AssemblyName>ServiceStack.OrmLite.SqlServer.Converters</AssemblyName>
+    <PackageId>ServiceStack.OrmLite.SqlServer.Converters</PackageId>
+    <GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
+    <GenerateAssemblyDescriptionAttribute>false</GenerateAssemblyDescriptionAttribute>
+    <GenerateAssemblyConfigurationAttribute>false</GenerateAssemblyConfigurationAttribute>
+    <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+    <GenerateAssemblyCopyrightAttribute>false</GenerateAssemblyCopyrightAttribute>
+    <GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+    <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' != 'Debug' ">
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+      <Reference Include="..\..\lib\pcl\ServiceStack.Interfaces.dll" />
+  </ItemGroup>
+
+  <PropertyGroup Condition=" '$(TargetFramework)' == 'net45' ">
+    <DefineConstants>$(DefineConstants);NET45;ASYNC</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition=" '$(TargetFramework)' == 'net45' ">
+    <PackageReference Include="Microsoft.SqlServer.Types" Version="14.0.314.76" />
+    <ProjectReference Include="..\ServiceStack.OrmLite\ServiceStack.OrmLite.csproj" />
+    <ProjectReference Include="..\ServiceStack.OrmLite.SqlServer\ServiceStack.OrmLite.SqlServer.csproj" />
+    <Reference Include="..\..\lib\net45\ServiceStack.Text.dll" />
+    <Reference Include="..\..\lib\net45\ServiceStack.Common.dll" />
+  </ItemGroup>
+
+</Project>

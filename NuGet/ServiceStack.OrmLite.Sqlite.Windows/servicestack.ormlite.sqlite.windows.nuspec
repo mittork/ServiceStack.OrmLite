@@ -3,10 +3,11 @@
   <metadata xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
     <id>ServiceStack.OrmLite.Sqlite.Windows</id>
     <title>OrmLite.Sqlite.Windows (x86/x64) - Fast, code-first, config-free Poco ORM</title>
-    <version>4.0.0</version>
+    <version>4.5.0</version>
     <authors>Service Stack</authors> 
     <owners>Service Stack</owners>
     <description>
+        For cross-platform Sqlite use ServiceStack.OrmLite.Sqlite instead.
         Light, simple and fast convention-based code-first POCO ORM. Support for Creating and Dropping Table Schemas from POCOs, Complex Property types transparently stored in schemaless text blobs in Sqlite.
     </description> 
     <projectUrl>https://github.com/ServiceStack/ServiceStack.OrmLite</projectUrl>
@@ -15,10 +16,10 @@
     <iconUrl>https://servicestack.net/img/logo-32.png</iconUrl>
     <tags>Sqlite Windows 32bit 64bit OrmLite POCO Code-First Orm Schema-less Blobs</tags>
     <language>en-US</language> 
-    <copyright>ServiceStack 2013 and contributors</copyright>
+    <copyright>Copyright 2017 ServiceStack</copyright>
     <dependencies>
-      <dependency id="System.Data.SQLite.Core" version="1.0.94.0" />
-      <dependency id="ServiceStack.OrmLite" version="4.0" />
+      <dependency id="System.Data.SQLite.Core" version="1.0.105.2" />
+      <dependency id="ServiceStack.OrmLite" version="4.5" />
     </dependencies> 
   </metadata> 
   <files>

@@ -1,3 +1,4 @@
+
 <#@ template language="C#" hostspecific="True" #>
 <#@ assembly name="EnvDTE" #>
 <#@ assembly name="System.Core.dll" #>
@@ -16,12 +17,12 @@
 <#@ import namespace="System.Text" #>
 <#@ import namespace="System.Text.RegularExpressions" #>
 <#@ import namespace="System.Configuration" #>
-<#@ import namespace="System.Windows.Forms" #>
+<#@ import namespace="System.Windows.Forms" #> 
 <#@ import namespace="Microsoft.VisualStudio.TextTemplating" #>
 <#+
 
 /*
- This is code is based on the T4 template from the PetaPoco project which in turn is based on the subsonic project.
+ This code is based on the T4 template from the PetaPoco project which in turn is based on the subsonic project.
 
  -----------------------------------------------------------------------------------------
 
@@ -86,6 +87,8 @@ string ClassPrefix = "";
 string ClassSuffix = "";
 string SchemaName = null;
 bool IncludeViews = false;
+bool IncludeFunctions = false;
+bool IncludeSPReturnTypes = false; //Will create {StoredProcName}_Result classes for any SPs with output results 
 
 public class Table
 {
@@ -95,6 +98,7 @@ public class Table
     public string Name;
 	public string Schema;
 	public bool IsView;
+	public bool IsFunction;
     public string CleanName;
     public string ClassName;
 	public string SequenceName;
@@ -196,6 +200,7 @@ public class TableIndex
 public class FKey
 {
     public string ToTable;
+	public string ToTableSingular;
 	public string FromColumn;
 	public string ToColumn;
 }
@@ -208,9 +213,11 @@ public class SP
     public string Schema;
     public string SchemaQualifiedName {get{return Schema+"."+Name;}}
     public List<SPParam> Parameters;
+	public List<SPOutputColumn> SPOutputColumns;
     public SP()
 	{
         Parameters=new List<SPParam>();
+		SPOutputColumns = new List<SPOutputColumn>();
     }
     public string ArgList
 	{
@@ -228,6 +235,12 @@ public class SP
             return sb.ToString();
         }
 	}
+}
+
+public class SPOutputColumn
+{
+	public string Name ;
+	public string DotNetType ;
 }
 
 public enum SPParamDir
@@ -264,8 +277,14 @@ static Func<string, string> CleanUp = (str) =>
 {
 	str = rxCleanUp.Replace(str, "_");
 
-	if (char.IsDigit(str[0]) || cs_keywords.Contains(str))
+	if (char.IsDigit(str[0]))
+	{
+		str = "_" + str;
+	}
+	else if (cs_keywords.Contains(str))
+	{
 		str = "@" + str;
+	}
 
     return str;
 };
@@ -282,6 +301,8 @@ static string CheckNullable(Column col)
         result="?";
     return result;
 }
+
+
 
 string GetConnectionString(ref string connectionStringName, out string providerName)
 {
@@ -520,7 +541,7 @@ Tables LoadTables(bool makeSingular)
 			else
 			{
 				// Assume SQL Server
-				reader=new SqlServerSchemaReader();
+				reader=new SqlServerSchemaReader(IncludeSPReturnTypes);
 			}
 
 			reader.outer=this;
@@ -534,11 +555,11 @@ Tables LoadTables(bool makeSingular)
 					result.RemoveAt(i);
 					continue;
 				}
-				if (!IncludeViews && result[i].IsView)
+				if ((!IncludeViews && result[i].IsView) ||(!IncludeFunctions && result[i].IsFunction))
 				{
 					result.RemoveAt(i);
 					continue;
-				}
+				}				
 			}
         }
 
@@ -588,6 +609,21 @@ List<SP> SPsNotSupported(string providerName)
 	WriteLine("// -----------------------------------------------------------------------------------------");
 	return new List<SP>();
 }
+
+string GetParamDirection(SPParamDir direction)
+		{ 
+		switch(direction)
+		{			
+			case SPParamDir.InAndOutDirection:
+				return "ParameterDirection.InputOutput";
+			case SPParamDir.OutDirection:
+				return "ParameterDirection.Output";
+			case SPParamDir.InDirection:
+			default:
+				return "ParameterDirection.Input";
+		} 
+		}
+
 
 List<SP> LoadSPs()
 {
@@ -666,7 +702,7 @@ List<SP> LoadSPs()
 			else
 			{
 				// Assume SQL Server
-				reader=new SqlServerSchemaReader();
+				reader=new SqlServerSchemaReader(IncludeSPReturnTypes);
 			}
 
             reader.outer=this;
@@ -781,17 +817,25 @@ static int GetDatatypeSize(string type)
 		return -1;
 }
 
+// Edit here to get a method to read the proc
 class SqlServerSchemaReader : SchemaReader
 {
+	private bool IncludeSPReturnTypes;
+	public SqlServerSchemaReader(bool includeSPReturnTypes)
+	{
+		IncludeSPReturnTypes = includeSPReturnTypes;
+	}
 	// SchemaReader.ReadSchema
+
+
 	public override Tables ReadSchema(DbConnection connection, DbProviderFactory factory)
 	{
-		var result=new Tables();
+		var result = new Tables();
 
 		_connection=connection;
 		_factory=factory;
 
-		var cmd=_factory.CreateCommand();
+		var cmd = _factory.CreateCommand();
 		cmd.Connection=connection;
 		cmd.CommandText=TABLE_SQL;
 
@@ -807,10 +851,38 @@ class SqlServerSchemaReader : SchemaReader
 					tbl.Name=rdr["TABLE_NAME"].ToString();
 					tbl.Schema=rdr["TABLE_SCHEMA"].ToString();
 					tbl.IsView=string.Compare(rdr["TABLE_TYPE"].ToString(), "View", true)==0;
+					tbl.IsFunction=string.Compare(rdr["TABLE_TYPE"].ToString(), "TVF", true)==0;
 					tbl.CleanName=CleanUp(tbl.Name);
 					tbl.ClassName=Inflector.MakeSingular(tbl.CleanName);
-
+					
 					result.Add(tbl);
+				}
+			}
+		}
+		
+		var cmdFks = _factory.CreateCommand();
+		cmdFks.Connection=connection;
+		cmdFks.CommandText=FOREIGN_KEYS_SQL;
+		//get all the foreign keys and add them to the tables.
+		using(cmdFks)
+		{
+			using (var rdr=cmdFks.ExecuteReader())
+			{
+				while(rdr.Read())
+				{
+					var tableName = rdr["TableWithForeignKey"].ToString();
+					var table = result.FirstOrDefault(x => x.Name == tableName);
+					if (table != null) {
+						if (table.FKeys == null) {
+							table.FKeys = new List<FKey>(); 
+						}
+						var newForeignKey = new FKey();
+						newForeignKey.ToTable = rdr["TargetTable"].ToString();
+						newForeignKey.ToTableSingular = Inflector.MakeSingular(CleanUp(newForeignKey.ToTable));
+						newForeignKey.FromColumn = rdr["ForeignKeyColumn"].ToString();
+						newForeignKey.ToColumn = rdr["TargetTableKey"].ToString();
+						table.FKeys.Add(newForeignKey);
+                    }
 				}
 			}
 		}
@@ -862,6 +934,7 @@ class SqlServerSchemaReader : SchemaReader
         foreach (var sp in result)
         {
             sp.Parameters=LoadSPParams(sp);
+			if (IncludeSPReturnTypes) sp.SPOutputColumns = LoadSPOutputColumns(sp);
         }
         return result;
     }
@@ -945,6 +1018,43 @@ class SqlServerSchemaReader : SchemaReader
 			}
 			return result;
 		}
+	}
+
+	List<SPOutputColumn> LoadSPOutputColumns(SP sp)
+	{ 
+		var result=new List<SPOutputColumn>();
+		using (var cmd=_factory.CreateCommand())
+		{
+			cmd.Connection=_connection;
+			cmd.CommandText=string.Format(@"SELECT name,CAST(is_nullable as VARCHAR(1)) is_nullable,system_type_name FROM sys.dm_exec_describe_first_result_set_for_object(OBJECT_ID('{0}'), 1)  WHERE is_hidden = 0",sp.SchemaQualifiedName);
+			using (IDataReader rdr=cmd.ExecuteReader())
+			{
+				while(rdr.Read())
+				{   
+					if (!rdr.IsDBNull(0))
+					{
+						SPOutputColumn param=new SPOutputColumn();
+						param.Name = rdr["name"].ToString();
+
+						var sqlType = rdr["system_type_name"].ToString();
+						var index = sqlType.IndexOf('('); //Trim off size data
+						if (index > 0) sqlType = sqlType.Substring(0,index);
+
+						var nullable = rdr["is_nullable"].ToString() ; 
+						if (nullable == "0")
+						{ 
+							param.DotNetType = GetPropertyType(sqlType);
+						}
+						else
+						{ 
+							param.DotNetType = GetNullablePropertyType(sqlType);
+						}
+					if (!result.Any(t=>t.Name == param.Name)) result.Add(param);
+					}   
+				}
+			}				
+		} 
+		return result;
 	}
 
 
@@ -1156,25 +1266,67 @@ class SqlServerSchemaReader : SchemaReader
 	}
 
 
-    const string TABLE_SQL=@"SELECT *
-        FROM  INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW'";
+    const string TABLE_SQL=@"SELECT * FROM  INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW'
+								UNION
+							SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME, 'TVF' FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'FUNCTION' AND DATA_TYPE = 'TABLE'";
 
-    const string COLUMN_SQL=@"SELECT
-            TABLE_CATALOG AS [Database],
-            TABLE_SCHEMA AS Owner,
-            TABLE_NAME AS TableName,
-            COLUMN_NAME AS ColumnName,
-            ORDINAL_POSITION AS OrdinalPosition,
-            COLUMN_DEFAULT AS DefaultSetting,
-            IS_NULLABLE AS IsNullable, DATA_TYPE AS DataType,
-            CHARACTER_MAXIMUM_LENGTH AS MaxLength,
-            DATETIME_PRECISION AS DatePrecision,
-            COLUMNPROPERTY(object_id('[' + TABLE_SCHEMA + '].[' + TABLE_NAME + ']'), COLUMN_NAME, 'IsIdentity') AS IsIdentity,
-            COLUMNPROPERTY(object_id('[' + TABLE_SCHEMA + '].[' + TABLE_NAME + ']'), COLUMN_NAME, 'IsComputed') as IsComputed
-        FROM  INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME=@tableName AND TABLE_SCHEMA=@schemaName
-        ORDER BY OrdinalPosition ASC";
+    const string COLUMN_SQL=@"SELECT T.[Database] ,
+									   T.Owner ,
+									   T.TableName ,
+									   T.ColumnName ,
+									   T.OrdinalPosition ,
+									   T.DefaultSetting ,
+									   T.IsNullable ,
+									   T.DataType ,
+									   T.MaxLength ,
+									   T.DatePrecision ,
+									   T.IsIdentity ,
+									   T.IsComputed FROM (
+								SELECT
+											TABLE_CATALOG AS [Database],
+											TABLE_SCHEMA AS Owner,
+											TABLE_NAME AS TableName,
+											COLUMN_NAME AS ColumnName,
+											ORDINAL_POSITION AS OrdinalPosition,
+											COLUMN_DEFAULT AS DefaultSetting,
+											IS_NULLABLE AS IsNullable, DATA_TYPE AS DataType,
+											CHARACTER_MAXIMUM_LENGTH AS MaxLength,
+											DATETIME_PRECISION AS DatePrecision,
+											COLUMNPROPERTY(object_id('[' + TABLE_SCHEMA + '].[' + TABLE_NAME + ']'), COLUMN_NAME, 'IsIdentity') AS IsIdentity,
+											COLUMNPROPERTY(object_id('[' + TABLE_SCHEMA + '].[' + TABLE_NAME + ']'), COLUMN_NAME, 'IsComputed') as IsComputed
+										FROM  INFORMATION_SCHEMA.COLUMNS
+										WHERE TABLE_NAME=@tableName AND TABLE_SCHEMA=@schemaName
+										--ORDER BY OrdinalPosition ASC
+								UNION
+								SELECT TABLE_CATALOG AS [Database],
+											TABLE_SCHEMA AS Owner,
+											TABLE_NAME AS TableName,
+											COLUMN_NAME AS ColumnName,
+											ORDINAL_POSITION AS OrdinalPosition,
+											COLUMN_DEFAULT AS DefaultSetting,
+											IS_NULLABLE AS IsNullable, DATA_TYPE AS DataType,
+											CHARACTER_MAXIMUM_LENGTH AS MaxLength,
+											DATETIME_PRECISION AS DatePrecision,
+											COLUMNPROPERTY(object_id('[' + TABLE_SCHEMA + '].[' + TABLE_NAME + ']'), COLUMN_NAME, 'IsIdentity') AS IsIdentity,
+											COLUMNPROPERTY(object_id('[' + TABLE_SCHEMA + '].[' + TABLE_NAME + ']'), COLUMN_NAME, 'IsComputed') as IsComputed  
+								FROM INFORMATION_SCHEMA.ROUTINE_COLUMNS
+								WHERE TABLE_NAME=@tableName AND TABLE_SCHEMA=@schemaName
+								) T
+								ORDER BY T.OrdinalPosition ASC";
+
+	const string FOREIGN_KEYS_SQL=
+@"SELECT DISTINCT
+	tableWithForeignKey.name AS TableWithForeignKey,
+	columnWithForeignKey.name AS ForeignKeyColumn,
+	referencedTable.name AS TargetTable,
+	referencedColumn.name AS TargetTableKey
+FROM sys.foreign_key_columns foreignKeyColumn
+INNER JOIN sys.tables tableWithForeignKey ON tableWithForeignKey.object_id = foreignKeyColumn.parent_object_id
+INNER JOIN sys.columns columnWithForeignKey ON columnWithForeignKey.object_id = foreignKeyColumn.parent_object_id 
+	AND columnWithForeignKey.column_id = foreignKeyColumn.parent_column_id
+INNER JOIN sys.tables referencedTable ON referencedTable.object_id = foreignKeyColumn.referenced_object_id
+INNER JOIN sys.columns referencedColumn ON referencedColumn.object_id = foreignKeyColumn.referenced_object_id 
+	AND referencedColumn.column_id = foreignKeyColumn.referenced_column_id";
 
     const string SP_NAMES_SQL=@"SELECT  o.name AS sp_name, s.name AS schema_name
 FROM    sys.objects o
@@ -1187,7 +1339,7 @@ WHERE   o.type = 'P'
                             'sysdiagrams' )";
 
 
-    const string SP_PARAMETERS_SQL=@"SELECT * from information_schema.PARAMETERS
+    const string SP_PARAMETERS_SQL=@"SELECT * from INFORMATION_SCHEMA.PARAMETERS
                                 where SPECIFIC_NAME = @spname
                                 order by ORDINAL_POSITION";
 
@@ -1431,6 +1583,33 @@ class PostGreSqlSchemaReader : SchemaReader
 			}
 		}
 
+		var cmdFks = _factory.CreateCommand();
+		cmdFks.Connection=connection;
+		cmdFks.CommandText=FOREIGN_KEYS_SQL;
+		//get all the foreign keys and add them to the tables.
+		using(cmdFks)
+		{
+			using (var rdr=cmdFks.ExecuteReader())
+			{
+				while(rdr.Read())
+				{
+					var tableName = rdr["TableWithForeignKey"].ToString();
+					var table = result.FirstOrDefault(x => x.Name == tableName);
+					if (table != null) {
+						if (table.FKeys == null) {
+							table.FKeys = new List<FKey>(); 
+						}
+						var newForeignKey = new FKey();
+						newForeignKey.ToTable = rdr["TargetTable"].ToString();
+						newForeignKey.ToTableSingular = Inflector.MakeSingular(CleanUp(newForeignKey.ToTable));
+						newForeignKey.FromColumn = rdr["ForeignKeyColumn"].ToString();
+						newForeignKey.ToColumn = rdr["TargetTableKey"].ToString();
+						table.FKeys.Add(newForeignKey);
+                    }
+				}
+			}
+		}
+
 		foreach (var tbl in result)
 		{
 			tbl.Columns=LoadColumns(tbl);
@@ -1492,11 +1671,11 @@ class PostGreSqlSchemaReader : SchemaReader
 	string GetPK(string table){
 
 		string sql=@"SELECT kcu.column_name
-			FROM information_schema.key_column_usage kcu
-			JOIN information_schema.table_constraints tc
-			ON kcu.constraint_name=tc.constraint_name
-			WHERE lower(tc.constraint_type)='primary key'
-			AND kcu.table_name=@tablename";
+			FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+			JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+			ON kcu.CONSTRAINT_NAME=tc.CONSTRAINT_NAME
+			WHERE lower(tc.CONSTRAINT_TYPE)='primary key'
+			AND kcu.TABLE_NAME=@tablename";
 
 		using (var cmd=_factory.CreateCommand())
 		{
@@ -1578,16 +1757,33 @@ class PostGreSqlSchemaReader : SchemaReader
 
 
 	const string TABLE_SQL=@"
-			SELECT table_name, table_schema, table_type
-			FROM information_schema.tables
-			WHERE (table_type='BASE TABLE' OR table_type='VIEW')
-				AND table_schema NOT IN ('pg_catalog', 'information_schema');
+			SELECT TABLE_NAME, TABLE_SCHEMA, TABLE_TYPE
+			FROM INFORMATION_SCHEMA.TABLES
+			WHERE (TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW')
+				AND TABLE_SCHEMA NOT IN ('pg_catalog', 'INFORMATION_SCHEMA');
 			";
 
 	const string COLUMN_SQL=@"
-			SELECT column_name, is_nullable, udt_name, column_default
-			FROM information_schema.columns
-			WHERE table_name=@tableName;
+			SELECT COLUMN_NAME, IS_NULLABLE, UDT_NAME, COLUMN_DEFAULT
+			FROM INFORMATION_SCHEMA.COLUMNS
+			WHERE TABLE_NAME=@tableName;
+			";
+
+	const string FOREIGN_KEYS_SQL=@"
+			SELECT
+				R.TABLE_NAME AS TableWithForeignKey,
+				R.COLUMN_NAME AS ForeignKeyColumn,
+				U.TABLE_NAME AS TargetTable,
+				U.COLUMN_NAME AS TargetTableKey
+			FROM INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE U
+			INNER JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS FK
+    			ON U.CONSTRAINT_CATALOG = FK.UNIQUE_CONSTRAINT_CATALOG
+    			AND U.CONSTRAINT_SCHEMA = FK.UNIQUE_CONSTRAINT_SCHEMA
+   				AND U.CONSTRAINT_NAME = FK.UNIQUE_CONSTRAINT_NAME
+			INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE R
+    			ON R.CONSTRAINT_CATALOG = FK.CONSTRAINT_CATALOG
+    			AND R.CONSTRAINT_SCHEMA = FK.CONSTRAINT_SCHEMA
+    			AND R.CONSTRAINT_NAME = FK.CONSTRAINT_NAME
 			";
 
 }
@@ -1717,8 +1913,8 @@ class MySqlSchemaReader : SchemaReader
 
 	const string TABLE_SQL=@"
 			SELECT *
-			FROM information_schema.tables
-			WHERE (table_type='BASE TABLE' OR table_type='VIEW')
+			FROM INFORMATION_SCHEMA.TABLES
+			WHERE (TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW')
 			";
 
 }
@@ -2597,6 +2793,8 @@ class Manager {
             if (sc != null && sc.IsItemUnderSCC(fileName) && !sc.IsItemCheckedOut(fileName))
                 checkOutAction.EndInvoke(checkOutAction.BeginInvoke(fileName, null, null));
         }
+
+		
     }
 }
 

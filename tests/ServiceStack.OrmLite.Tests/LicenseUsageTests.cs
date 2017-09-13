@@ -1,7 +1,7 @@
-﻿// Copyright (c) Service Stack LLC. All Rights Reserved.
+﻿// Copyright (c) ServiceStack, Inc. All Rights Reserved.
 // License: https://raw.github.com/ServiceStack/ServiceStack/master/license.txt
 
-
+using System;
 using System.Data;
 using NUnit.Framework;
 using ServiceStack.Configuration;
@@ -23,7 +23,11 @@ namespace ServiceStack.OrmLite.Tests
         [TearDown]
         public void TearDown()
         {
+#if NETCORE
+            Licensing.RegisterLicense(Environment.GetEnvironmentVariable("SERVICESTACK_LICENSE"));
+#else            
             Licensing.RegisterLicense(new AppSettings().GetString("servicestack:license"));
+#endif
         }
 
         [Test]
@@ -50,8 +54,11 @@ namespace ServiceStack.OrmLite.Tests
         [Test]
         public void Allows_creation_of_11_tables()
         {
+#if NETCORE
+            Licensing.RegisterLicense(Environment.GetEnvironmentVariable("SERVICESTACK_LICENSE"));
+#else            
             Licensing.RegisterLicense(new AppSettings().GetString("servicestack:license"));
-
+#endif
             Create10Tables();
             Create10Tables();
 
@@ -76,14 +83,14 @@ namespace ServiceStack.OrmLite.Tests
     {
         protected IDbConnection db;
 
-        [TestFixtureSetUp]
-        public void TestFixtureSetUp()
+        [OneTimeSetUp]
+        public new void TestFixtureSetUp()
         {
             db = base.OpenDbConnection();
         }
 
-        [TestFixtureTearDown]
-        public void TestFixtureTearDown()
+        [OneTimeTearDown]
+        public new void TestFixtureTearDown()
         {
             db.Dispose();
         }

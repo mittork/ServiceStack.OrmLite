@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
 
@@ -43,16 +44,6 @@ namespace ServiceStack.OrmLite
             return dbConn.GetExecFilter().Exec(dbConn, filter);
         }
 
-
-        /// <summary>
-        /// Create a new SqlExpression builder allowing typed LINQ-like queries.
-        /// </summary>
-        [Obsolete("Use From<T>")]
-        public static SqlExpression<T> SqlExpression<T>(this IDbConnection dbConn)
-        {
-            return dbConn.GetExecFilter().SqlExpression<T>(dbConn);
-        }
-
         /// <summary>
         /// Creates a new SqlExpression builder allowing typed LINQ-like queries.
         /// Alias for SqlExpression.
@@ -77,6 +68,22 @@ namespace ServiceStack.OrmLite
             var expr = dbConn.GetExecFilter().SqlExpression<T>(dbConn);
             expr.From(fromExpression);
             return expr;
+        }
+
+        public static JoinFormatDelegate JoinAlias(this IDbConnection dbConn, string alias)
+        {
+            return (dialect, tableDef, expr) =>
+                $"{dialect.GetQuotedTableName(tableDef)} {alias} {expr.Replace(dialect.GetQuotedTableName(tableDef), dialect.GetQuotedTableName(alias))}";
+        }
+
+        public static string GetTableName<T>(this IDbConnection db)
+        {
+            return db.GetDialectProvider().GetTableName(ModelDefinition<T>.Definition);
+        }
+
+        public static string GetQuotedTableName<T>(this IDbConnection db)
+        {
+            return db.GetDialectProvider().GetQuotedTableName(ModelDefinition<T>.Definition);
         }
 
         /// <summary>
@@ -114,15 +121,6 @@ namespace ServiceStack.OrmLite
 
         /// <summary>
         /// Returns results from using an SqlExpression lambda. E.g:
-        /// <para>db.Select&lt;Person&gt;(q =&gt; q.Where(x =&gt; x.Age &gt; 40))</para>
-        /// </summary>
-        public static List<T> Select<T>(this IDbConnection dbConn, Func<SqlExpression<T>, SqlExpression<T>> expression)
-        {
-            return dbConn.Exec(dbCmd => dbCmd.Select(expression));
-        }
-
-        /// <summary>
-        /// Returns results from using an SqlExpression lambda. E.g:
         /// <para>db.Select(db.From&lt;Person&gt;().Where(x =&gt; x.Age &gt; 40))</para>
         /// </summary>
         public static List<T> Select<T>(this IDbConnection dbConn, SqlExpression<T> expression)
@@ -131,28 +129,48 @@ namespace ServiceStack.OrmLite
         }
 
         /// <summary>
-        /// Project results from a number of joined tables into a different model
-        /// </summary>
-        public static List<Into> Select<Into, From>(this IDbConnection dbConn, SqlExpression<From> expression)
-        {
-            return dbConn.Exec(dbCmd => dbCmd.Select<Into, From>(expression));
-        }
-
-        /// <summary>
-        /// Project results from a number of joined tables into a different model
-        /// </summary>
-        public static List<Into> Select<Into, From>(this IDbConnection dbConn, Func<SqlExpression<From>, SqlExpression<From>> expression)
-        {
-            return dbConn.Exec(dbCmd => dbCmd.Select<Into, From>(expression));
-        }
-
-        /// <summary>
         /// Returns results from using an SqlExpression lambda. E.g:
         /// <para>db.Select(db.From&lt;Person&gt;().Where(x =&gt; x.Age &gt; 40))</para>
         /// </summary>
         public static List<T> Select<T>(this IDbConnection dbConn, ISqlExpression expression, object anonType = null)
         {
-            return dbConn.Exec(dbCmd => dbCmd.SqlList<T>(expression.SelectInto<T>(), anonType));
+            if (anonType != null)
+                return dbConn.Exec(dbCmd => dbCmd.SqlList<T>(expression.SelectInto<T>(), anonType));
+
+            if (expression.Params != null && expression.Params.Any())
+                return dbConn.Exec(dbCmd => dbCmd.SqlList<T>(expression.SelectInto<T>(), expression.Params.ToDictionary(param => param.ParameterName, param => param.Value)));
+
+            return dbConn.Exec(dbCmd => dbCmd.SqlList<T>(expression.SelectInto<T>(), expression.Params));
+        }
+
+        public static List<Tuple<T, T2>> SelectMulti<T, T2>(this IDbConnection dbConn, SqlExpression<T> expression)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.SelectMulti<T, T2>(expression));
+        }
+
+        public static List<Tuple<T, T2, T3>> SelectMulti<T, T2, T3>(this IDbConnection dbConn, SqlExpression<T> expression)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.SelectMulti<T, T2, T3>(expression));
+        }
+
+        public static List<Tuple<T, T2, T3, T4>> SelectMulti<T, T2, T3, T4>(this IDbConnection dbConn, SqlExpression<T> expression)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.SelectMulti<T, T2, T3, T4>(expression));
+        }
+
+        public static List<Tuple<T, T2, T3, T4, T5>> SelectMulti<T, T2, T3, T4, T5>(this IDbConnection dbConn, SqlExpression<T> expression)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.SelectMulti<T, T2, T3, T4, T5>(expression));
+        }
+
+        public static List<Tuple<T, T2, T3, T4, T5, T6>> SelectMulti<T, T2, T3, T4, T5, T6>(this IDbConnection dbConn, SqlExpression<T> expression)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.SelectMulti<T, T2, T3, T4, T5, T6>(expression));
+        }
+
+        public static List<Tuple<T, T2, T3, T4, T5, T6, T7>> SelectMulti<T, T2, T3, T4, T5, T6, T7>(this IDbConnection dbConn, SqlExpression<T> expression)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.SelectMulti<T, T2, T3, T4, T5, T6, T7>(expression));
         }
 
         /// <summary>
@@ -162,15 +180,6 @@ namespace ServiceStack.OrmLite
         public static T Single<T>(this IDbConnection dbConn, Expression<Func<T, bool>> predicate)
         {
             return dbConn.Exec(dbCmd => dbCmd.Single(predicate));
-        }
-
-        /// <summary>
-        /// Returns a single result from using an SqlExpression lambda. E.g:
-        /// <para>db.Single&lt;Person&gt;(q =&gt; q.Where(x =&gt; x.Age == 42))</para>
-        /// </summary>
-        public static T Single<T>(this IDbConnection dbConn, Func<SqlExpression<T>, SqlExpression<T>> expression)
-        {
-            return dbConn.Exec(dbCmd => dbCmd.Single(expression));
         }
 
         /// <summary>
@@ -186,18 +195,18 @@ namespace ServiceStack.OrmLite
         /// Returns results from using an SqlExpression lambda. E.g:
         /// <para>db.Single(db.From&lt;Person&gt;().Where(x =&gt; x.Age &gt; 40))</para>
         /// </summary>
-        public static T Single<T>(this IDbConnection dbConn, ISqlExpression expression, object anonType = null)
+        public static T Single<T>(this IDbConnection dbConn, ISqlExpression expression)
         {
-            return dbConn.Exec(dbCmd => dbCmd.Single<T>(expression.SelectInto<T>(), anonType));
+            return dbConn.Exec(dbCmd => dbCmd.Single<T>(expression.SelectInto<T>(), expression.Params));
         }
 
         /// <summary>
         /// Returns a scalar result from using an SqlExpression lambda. E.g:
         /// <para>db.Scalar&lt;Person, int&gt;(x =&gt; Sql.Max(x.Age))</para>
         /// </summary>
-        public static TKey Scalar<T, TKey>(this IDbConnection dbConn, Expression<Func<T, TKey>> field)
+        public static TKey Scalar<T, TKey>(this IDbConnection dbConn, Expression<Func<T, object>> field)
         {
-            return dbConn.Exec(dbCmd => dbCmd.Scalar(field));
+            return dbConn.Exec(dbCmd => dbCmd.Scalar<T, TKey>(field));
         }
 
         /// <summary>
@@ -205,9 +214,9 @@ namespace ServiceStack.OrmLite
         /// <para>db.Scalar&lt;Person, int&gt;(x =&gt; Sql.Max(x.Age), , x =&gt; x.Age &lt; 50)</para>
         /// </summary>        
         public static TKey Scalar<T, TKey>(this IDbConnection dbConn,
-            Expression<Func<T, TKey>> field, Expression<Func<T, bool>> predicate)
+            Expression<Func<T, object>> field, Expression<Func<T, bool>> predicate)
         {
-            return dbConn.Exec(dbCmd => dbCmd.Scalar(field, predicate));
+            return dbConn.Exec(dbCmd => dbCmd.Scalar<T, TKey>(field, predicate));
         }
 
         /// <summary>
@@ -215,15 +224,6 @@ namespace ServiceStack.OrmLite
         /// <para>db.Count&lt;Person&gt;(x =&gt; x.Age &lt; 50)</para>
         /// </summary>
         public static long Count<T>(this IDbConnection dbConn, Expression<Func<T, bool>> expression)
-        {
-            return dbConn.Exec(dbCmd => dbCmd.Count(expression));
-        }
-
-        /// <summary>
-        /// Returns the count of rows that match the SqlExpression lambda, E.g:
-        /// <para>db.Count&lt;Person&gt;(q =&gt; q.Where(x =&gt; x.Age &lt; 50))</para>
-        /// </summary>
-        public static long Count<T>(this IDbConnection dbConn, Func<SqlExpression<T>, SqlExpression<T>> expression)
         {
             return dbConn.Exec(dbCmd => dbCmd.Count(expression));
         }
@@ -254,9 +254,17 @@ namespace ServiceStack.OrmLite
         /// <summary>
         /// Return the number of rows returned by the supplied sql
         /// </summary>
-        public static long RowCount(this IDbConnection dbConn, string sql)
+        public static long RowCount(this IDbConnection dbConn, string sql, object anonType = null)
         {
-            return dbConn.Exec(dbCmd => dbCmd.RowCount(sql));
+            return dbConn.Exec(dbCmd => dbCmd.RowCount(sql, anonType));
+        }
+
+        /// <summary>
+        /// Return the number of rows returned by the supplied sql and db params
+        /// </summary>
+        public static long RowCount(this IDbConnection dbConn, string sql, IEnumerable<IDbDataParameter> sqlParams)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.RowCount(sql, sqlParams));
         }
 
         /// <summary>
@@ -269,12 +277,12 @@ namespace ServiceStack.OrmLite
         }
 
         /// <summary>
-        /// Returns results with references from using an SqlExpression lambda. E.g:
-        /// <para>db.LoadSelect&lt;Person&gt;(q =&gt; q.Where(x =&gt; x.Age &gt; 40))</para>
+        /// Returns results with references from using a LINQ Expression. E.g:
+        /// <para>db.LoadSelect&lt;Person&gt;(x =&gt; x.Age &gt; 40, include: x => new { x.PrimaryAddress })</para>
         /// </summary>
-        public static List<T> LoadSelect<T>(this IDbConnection dbConn, Func<SqlExpression<T>, SqlExpression<T>> expression, string[] include = null)
+        public static List<T> LoadSelect<T>(this IDbConnection dbConn, Expression<Func<T, bool>> predicate, Expression<Func<T, object>> include)
         {
-            return dbConn.Exec(dbCmd => dbCmd.LoadSelect(expression, include));
+            return dbConn.Exec(dbCmd => dbCmd.LoadSelect(predicate, include.GetFieldNames()));
         }
 
         /// <summary>
@@ -287,11 +295,45 @@ namespace ServiceStack.OrmLite
         }
 
         /// <summary>
+        /// Returns results with references from using an SqlExpression lambda. E.g:
+        /// <para>db.LoadSelect(db.From&lt;Person&gt;().Where(x =&gt; x.Age &gt; 40), include:q.OnlyFields)</para>
+        /// </summary>
+        public static List<T> LoadSelect<T>(this IDbConnection dbConn, SqlExpression<T> expression, IEnumerable<string> include)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.LoadSelect(expression, include));
+        }
+
+        /// <summary>
+        /// Returns results with references from using an SqlExpression lambda. E.g:
+        /// <para>db.LoadSelect(db.From&lt;Person&gt;().Where(x =&gt; x.Age &gt; 40), include: x => new { x.PrimaryAddress })</para>
+        /// </summary>
+        public static List<T> LoadSelect<T>(this IDbConnection dbConn, SqlExpression<T> expression, Expression<Func<T, object>> include)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.LoadSelect(expression, include.GetFieldNames()));
+        }
+
+        /// <summary>
         /// Project results with references from a number of joined tables into a different model
         /// </summary>
         public static List<Into> LoadSelect<Into, From>(this IDbConnection dbConn, SqlExpression<From> expression, string[] include = null)
         {
             return dbConn.Exec(dbCmd => dbCmd.LoadSelect<Into, From>(expression, include));
+        }
+
+        /// <summary>
+        /// Project results with references from a number of joined tables into a different model
+        /// </summary>
+        public static List<Into> LoadSelect<Into, From>(this IDbConnection dbConn, SqlExpression<From> expression, IEnumerable<string> include)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.LoadSelect<Into, From>(expression, include));
+        }
+
+        /// <summary>
+        /// Project results with references from a number of joined tables into a different model
+        /// </summary>
+        public static List<Into> LoadSelect<Into, From>(this IDbConnection dbConn, SqlExpression<From> expression, Expression<Func<Into, object>> include)
+        {
+            return dbConn.Exec(dbCmd => dbCmd.LoadSelect<Into, From>(expression, include.GetFieldNames()));
         }
     }
 }

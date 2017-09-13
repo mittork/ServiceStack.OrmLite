@@ -4,7 +4,7 @@
 // Authors:
 //   Demis Bellot (demis.bellot@gmail.com)
 //
-// Copyright 2013 Service Stack LLC. All Rights Reserved.
+// Copyright 2013 ServiceStack, Inc. All Rights Reserved.
 //
 // Licensed under the same terms of ServiceStack.
 //
@@ -20,19 +20,15 @@ namespace ServiceStack.OrmLite
 
         public string Alias { get; set; }
 
-        public string FieldName
-        {
-            get { return this.Alias ?? this.Name; }
-        }
+        public string FieldName => this.Alias ?? this.Name;
 
         public Type FieldType { get; set; }
 
+        public object FieldTypeDefaultValue { get; set; }
+
         public Type TreatAsType { get; set; }
 
-        public Type ColumnType
-        {
-            get { return TreatAsType ?? FieldType; }
-        }
+        public Type ColumnType => TreatAsType ?? FieldType;
 
         public PropertyInfo PropertyInfo { get; set; }
 
@@ -58,21 +54,23 @@ namespace ServiceStack.OrmLite
 
         public string DefaultValue { get; set; }
 
+        public string CheckConstraint { get; set; }
+
         public ForeignKeyConstraint ForeignKey { get; set; }
 
-        public PropertyGetterDelegate GetValueFn { get; set; }
+        public GetMemberDelegate GetValueFn { get; set; }
 
-        public PropertySetterDelegate SetValueFn { get; set; }
+        public SetMemberDelegate SetValueFn { get; set; }
 
         public object GetValue(object onInstance)
         {
-            return this.GetValueFn == null ? null : this.GetValueFn(onInstance);
+            return this.GetValueFn?.Invoke(onInstance);
         }
 
         public string GetQuotedName(IOrmLiteDialectProvider dialectProvider)
         {
             return IsRowVersion
-                ? dialectProvider.GetRowVersionColumnName(this)
+                ? dialectProvider.GetRowVersionColumnName(this).ToString()
                 : dialectProvider.GetQuotedColumnName(FieldName);
         }
 
@@ -88,6 +86,8 @@ namespace ServiceStack.OrmLite
 
         public string ComputeExpression { get; set; }
 
+        public string CustomSelect { get; set; }
+
         public string BelongToModelName { get; set; }
 
         public bool IsReference { get; set; }
@@ -96,20 +96,17 @@ namespace ServiceStack.OrmLite
 
         public bool IsRefType { get; set; }
 
-        public bool ShouldSkipInsert()
-        {
-            return AutoIncrement || IsComputed || IsRowVersion;
-        }
+        public bool IgnoreOnUpdate { get; set; }
 
-        public bool ShouldSkipUpdate()
-        {
-            return IsComputed;
-        }
+        public bool IgnoreOnInsert { get; set; }
+        
+        public override string ToString() => Name;
 
-        public bool ShouldSkipDelete()
-        {
-            return IsComputed;
-        }
+        public bool ShouldSkipInsert() => IgnoreOnInsert || AutoIncrement || IsComputed || IsRowVersion;
+
+        public bool ShouldSkipUpdate() => IgnoreOnUpdate || IsComputed;
+
+        public bool ShouldSkipDelete() => IsComputed;
 
         public bool IsSelfRefField(FieldDefinition fieldDef)
         {
@@ -121,6 +118,44 @@ namespace ServiceStack.OrmLite
         {
             return (Alias != null && Alias + "Id" == name)
                     || Name + "Id" == name;
+        }
+
+        public FieldDefinition Clone(Action<FieldDefinition> modifier = null)
+        {
+            var fieldDef = new FieldDefinition
+            {
+                Name = Name,
+                Alias = Alias,
+                FieldType = FieldType,
+                FieldTypeDefaultValue = FieldTypeDefaultValue,
+                TreatAsType = TreatAsType,
+                PropertyInfo = PropertyInfo,
+                IsPrimaryKey = IsPrimaryKey,
+                AutoIncrement = AutoIncrement,
+                IsNullable = IsNullable,
+                IsIndexed = IsIndexed,
+                IsUnique = IsUnique,
+                IsClustered = IsClustered,
+                IsNonClustered = IsNonClustered,
+                IsRowVersion = IsRowVersion,
+                FieldLength = FieldLength,
+                Scale = Scale,
+                DefaultValue = DefaultValue,
+                ForeignKey = ForeignKey,
+                GetValueFn = GetValueFn,
+                SetValueFn = SetValueFn,
+                Sequence = Sequence,
+                IsComputed = IsComputed,
+                ComputeExpression = ComputeExpression,
+                CustomSelect = CustomSelect,
+                BelongToModelName = BelongToModelName,
+                IsReference = IsReference,
+                CustomFieldDefinition = CustomFieldDefinition,
+                IsRefType = IsRefType,
+            };
+
+            modifier?.Invoke(fieldDef);
+            return fieldDef;
         }
     }
 
@@ -151,10 +186,10 @@ namespace ServiceStack.OrmLite
                     ? refModelDef.Schema + "_" + NamingStrategy.GetTableName(refModelDef.ModelName)
                     : NamingStrategy.GetTableName(refModelDef.ModelName);
 
-                var fkName = string.Format("FK_{0}_{1}_{2}", modelName, refModelName, fieldDef.FieldName);
+                var fkName = $"FK_{modelName}_{refModelName}_{fieldDef.FieldName}";
                 return NamingStrategy.ApplyNameRestrictions(fkName);
             }
-            else { return ForeignKeyName; }
+            return ForeignKeyName;
         }
     }
 }

@@ -1,4 +1,4 @@
-//Copyright (c) Service Stack LLC. All Rights Reserved.
+//Copyright (c) ServiceStack, Inc. All Rights Reserved.
 //License: https://raw.github.com/ServiceStack/ServiceStack/master/license.txt
 
 
@@ -68,6 +68,8 @@ namespace ServiceStack.OrmLite
         public Func<IDbCommand, long> LastInsertIdFn { get; set; }
 
         public Action<string> SqlFilter { get; set; }
+        public Action<IDbCommand> SqlCommandFilter { get; set; }
+
         public bool PrintSql { get; set; }
 
         private readonly IOrmLiteResultsFilter previousFilter;
@@ -82,10 +84,9 @@ namespace ServiceStack.OrmLite
 
         private void Filter(IDbCommand dbCmd)
         {
-            if (SqlFilter != null)
-            {
-                SqlFilter(dbCmd.CommandText);
-            }
+            SqlFilter?.Invoke(dbCmd.CommandText);
+
+            SqlCommandFilter?.Invoke(dbCmd);
 
             if (PrintSql)
             {
@@ -140,12 +141,12 @@ namespace ServiceStack.OrmLite
 
         private long GetLongScalarResult(IDbCommand dbCmd)
         {
-            return LongScalarResultFn != null ? LongScalarResultFn(dbCmd) : LongScalarResult;
+            return LongScalarResultFn?.Invoke(dbCmd) ?? LongScalarResult;
         }
 
         public long GetLastInsertId(IDbCommand dbCmd)
         {
-            return LastInsertIdFn != null ? LastInsertIdFn(dbCmd) : LastInsertId;
+            return LastInsertIdFn?.Invoke(dbCmd) ?? LastInsertId;
         }
 
         public List<T> GetList<T>(IDbCommand dbCmd)
@@ -157,7 +158,7 @@ namespace ServiceStack.OrmLite
         public IList GetRefList(IDbCommand dbCmd, Type refType)
         {
             Filter(dbCmd);
-            var list = (IList)typeof(List<>).MakeGenericType(refType).CreateInstance();
+            var list = (IList)typeof(List<>).GetCachedGenericType(refType).CreateInstance();
             foreach (object result in GetRefResults(dbCmd, refType))
             {
                 list.Add(result);
@@ -245,7 +246,7 @@ namespace ServiceStack.OrmLite
         public List<T> GetColumn<T>(IDbCommand dbCmd)
         {
             Filter(dbCmd);
-            return (from object result in (GetColumnResults<T>(dbCmd) ?? new T[0]) select (T)result).ToList();
+            return (from object result in GetColumnResults<T>(dbCmd).Safe() select (T)result).ToList();
         }
 
         public HashSet<T> GetColumnDistinct<T>(IDbCommand dbCmd)
@@ -298,11 +299,8 @@ namespace ServiceStack.OrmLite
         public int ExecuteSql(IDbCommand dbCmd)
         {
             Filter(dbCmd);
-            if (ExecuteSqlFn != null)
-            {
-                return ExecuteSqlFn(dbCmd);
-            }
-            return ExecuteSqlResult;
+            return ExecuteSqlFn?.Invoke(dbCmd)
+                ?? ExecuteSqlResult;
         }
 
         public void Dispose()
@@ -315,15 +313,44 @@ namespace ServiceStack.OrmLite
     {
         public CaptureSqlFilter()
         {
-            SqlFilter = CaptureSql;
-            SqlStatements = new List<string>();
+            SqlCommandFilter = CaptureSqlCommand;
+            SqlCommandHistory = new List<SqlCommandDetails>();
         }
 
-        private void CaptureSql(string sql)
+        private void CaptureSqlCommand(IDbCommand command)
         {
-            SqlStatements.Add(sql);
+            SqlCommandHistory.Add(new SqlCommandDetails(command));
         }
 
-        public List<string> SqlStatements { get; set; }
+        public List<SqlCommandDetails> SqlCommandHistory { get; set; }
+
+        public List<string> SqlStatements
+        {
+            get { return SqlCommandHistory.Map(x => x.Sql); }
+        }
+    }
+
+    public class SqlCommandDetails
+    {
+        public SqlCommandDetails(IDbCommand command)
+        {
+            if (command == null)
+                return;
+
+            Sql = command.CommandText;
+            if (command.Parameters.Count <= 0)
+                return;
+
+            Parameters = new Dictionary<string, object>();
+
+            foreach (IDataParameter parameter in command.Parameters)
+            {
+                if (!Parameters.ContainsKey(parameter.ParameterName))
+                    Parameters.Add(parameter.ParameterName, parameter.Value);
+            }
+        }
+
+        public string Sql { get; set; }
+        public Dictionary<string, object> Parameters { get; set; }
     }
 }

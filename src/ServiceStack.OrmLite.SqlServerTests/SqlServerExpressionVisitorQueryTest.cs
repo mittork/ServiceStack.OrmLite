@@ -12,15 +12,22 @@ namespace ServiceStack.OrmLite.SqlServerTests
     [TestFixture]
     public class SqlServerExpressionVisitorQueryTest : OrmLiteTestBase
     {
+        [OneTimeSetUp]
+        public override void TestFixtureSetUp()
+        {
+            OrmLiteConfig.SanitizeFieldNameForParamNameFn = s =>
+                (s ?? "").Replace(" ", "").Replace("°", "");
+        }
+
         [Test]
         public void Skip_Take_works_with_injected_Visitor()
         {
             using (var db = OpenDbConnection())
             {
                 FillTestEntityTableWithTestData(db);
-                
-                var result = db.Select<TestEntity>(q => q.Limit(10, 100));
-                
+
+                var result = db.Select(db.From<TestEntity>().Limit(10, 100));
+
                 Assert.NotNull(result);
                 Assert.AreEqual(100, result.Count);
                 Assert.Less(10, result[0].Id);
@@ -102,7 +109,7 @@ namespace ServiceStack.OrmLite.SqlServerTests
         [Test]
         public void test_if_and_works_with_nullable_parameter()
         {
-            using(var db = OpenDbConnection())
+            using (var db = OpenDbConnection())
             {
                 db.CreateTable<TestEntity>(true);
                 var id = db.Insert(new TestEntity
@@ -156,7 +163,61 @@ namespace ServiceStack.OrmLite.SqlServerTests
                 Assert.LessOrEqual(result[10].Baz, result[11].Baz);
             }
         }
-        
+
+        [Test]
+        public void Can_query_table_with_special_alias()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<TestEntityWithAliases>();
+
+                db.Insert(new TestEntityWithAliases { Id = 1, Foo = "Foo", Bar = "Bar", Baz = 2 });
+
+                var row = db.SingleById<TestEntityWithAliases>(1);
+                Assert.That(row.Foo, Is.EqualTo("Foo"));
+
+                row = db.Single<TestEntityWithAliases>(q => q.Bar == "Bar");
+                Assert.That(row.Foo, Is.EqualTo("Foo"));
+            }
+        }
+
+        [Test]
+        public void Can_OrderbyDesc_using_ComplexFunc()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<TestEntityWithAliases>();
+
+                db.Insert(new TestEntityWithAliases {Id = 1, Foo = "Foo", Bar = "Bar", Baz = 2});
+
+                System.Linq.Expressions.Expression<Func<TestEntityWithAliases, object>> orderBy = x =>
+                    String.Concat(String.Concat("Text1: ", x.Foo),
+                        String.Concat("Text2: ", x.Bar));
+                var q = db.From<TestEntityWithAliases>().OrderByDescending(orderBy);
+                Assert.That(q.ToSelectStatement().ToLower(), Does.Not.Contain("desc,"));
+
+                var target = db.Select(q);
+                Assert.That(target.Count, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void Can_OrderBy_using_isnull()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<TestEntityWithAliases>();
+
+                db.Insert(new TestEntityWithAliases {Id = 1, Foo = "Foo", Bar = "Bar", Baz = 2});
+                System.Linq.Expressions.Expression<Func<TestEntityWithAliases, object>> orderBy = x => x.Foo == null ? x.Foo : x.Bar;
+                var q = Db.From<TestEntityWithAliases>().OrderBy(orderBy);
+                Assert.That(q.ToSelectStatement().ToLower(), Does.Not.Contain("isnull"));
+
+                var target = db.Select(q);
+                Assert.That(target.Count, Is.EqualTo(1));
+            }
+        }
+
         protected void FillTestEntityTableWithTestData(IDbConnection db)
         {
             db.CreateTable<TestEntity>(true);
